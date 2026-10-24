@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sundered Vale — Sprite Preview</title>
+<link rel="icon" href="data:," />
+<style>
+  :root { --navy: #1c2448; --cream: #fbf6e8; --ink: #20233a; }
+  html, body { margin: 0; background: #5d9c48; color: var(--ink); font: 13px/1.35 ui-monospace, Menlo, Consolas, monospace; }
+  body { background-image: var(--grass); background-size: 64px 64px; image-rendering: pixelated; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--cream); border-bottom: 3px solid var(--navy); padding: 8px 14px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; color: var(--navy); }
+  header nav a { color: var(--navy); margin-right: 10px; font-weight: bold; }
+  header .stat { color: #4a5070; }
+  section { margin: 14px; }
+  h2 { display: table; background: var(--cream); border: 3px solid var(--navy); border-radius: 10px; padding: 3px 12px; margin: 6px 0 10px; font-size: 15px; color: var(--navy); }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+  .card { background: rgba(251, 246, 232, 0.92); border: 3px solid var(--navy); border-radius: 12px; padding: 6px 8px 4px; box-shadow: 0 3px 0 rgba(0,0,0,.25); }
+  .card.clear { background: rgba(251, 246, 232, 0.14); border-color: rgba(28,36,72,.55); }
+  .card.clear .name { background: var(--cream); display: inline-block; padding: 0 6px; border-radius: 6px; }
+  .card .name { font-weight: bold; color: var(--navy); }
+  .card .sub { color: #5a607a; font-size: 11px; }
+  canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+  .lineup { display: flex; align-items: flex-end; gap: 4px; }
+  .arrow { font-size: 26px; color: var(--cream); text-shadow: 0 2px 0 var(--navy); padding: 0 4px 40px; }
+  .stage { text-align: center; }
+  .anims { display: flex; gap: 6px; align-items: flex-end; flex-wrap: wrap; }
+  .anims figure { margin: 0; text-align: center; }
+  figcaption { font-size: 10px; color: #4a5070; }
+  .sheet canvas { background: transparent; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sundered Vale · Sprite Preview</h1>
+  <nav><a href="?s=lineup">Lineup</a><a href="?s=anim">Animated</a><a href="?s=contact">Contact</a><a href="?s=sheet">All frames</a><a href="?s=minions">Minions</a><a href="?s=trainers">Trainers</a><a href="?s=ui">UI / Icons</a><a href="?s=showcase">Showcase</a><a href="?">All</a></nav>
+  <span class="stat" id="stat">building…</span>
+</header>
+<main id="main"></main>
+<script type="module" src="./preview.js"></script>
+</body>
+</html>

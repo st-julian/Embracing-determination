@@ -1,0 +1,35 @@
+/* mt/ui/title.css — title screen (mt/ui/title.js) + overrides of the legacy title DOM (hud-*.js buildMenu).
+   Owner: front-end screens. Legacy rules are only overridden here (no legacy CSS edits). */
+
+/* one full-screen art-pixel canvas (integer zoom, nearest-neighbour) */
+#mt-title { position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0; transition: opacity .35s ease; overflow: hidden; background: #24204a; }
+#mt-title.on { opacity: 1; }
+#mt-title canvas.tt-px { position: absolute; left: 0; top: 0; image-rendering: pixelated; image-rendering: crisp-edges; }
+@supports (image-rendering: pixelated) { #mt-title canvas.tt-px { image-rendering: pixelated; } }
+
+/* glyph chips (also used in the lobby) */
+.tg { display: inline-grid; place-items: center; box-sizing: border-box; flex: none; width: 1.55em; height: 1.55em; border-radius: 50%; background: radial-gradient(circle at 50% 35%, #3a467e, #1b2350 70%); box-shadow: 0 0 0 2px #e9edff, 0 2px 0 3px rgba(6, 8, 24, .6); color: #fff; font: 400 .78em/1 'Vale Pixel Bold', system-ui, sans-serif; font-style: normal; vertical-align: middle; margin: 0 .2em; }
+.tg svg { width: 72%; height: 72%; display: block; }
+.tg.xb { color: var(--c); font-size: .8em; }
+.tg.sh { width: auto; min-width: 1.9em; padding: 0 .35em; border-radius: .45em; font-size: .72em; height: 1.75em; }
+.tg.st { box-shadow: 0 0 0 2px #e9edff, inset 0 0 0 .22em #2c3870, 0 2px 0 3px rgba(6, 8, 24, .6); font-size: .7em; }
+.tg.dp { background: #3a467e; border-radius: .35em; }
+.tg.k { width: auto; min-width: 1.6em; padding: 0 .4em; border-radius: .3em; background: #fffaf0; color: #1b2350; box-shadow: 0 0 0 2px #1b2350, 0 2px 0 2px #1b2350; font-size: .72em; height: 1.7em; }
+.tg.tc { background: #fffaf0; box-shadow: 0 0 0 2px #1b2350, 0 2px 0 2px rgba(6, 8, 24, .6); }
+
+/* ---------------------------------------------------------------- legacy title DOM (inside the scaled .sv-stage)
+   Only for input now: everything is hidden except the Play button and the language picker, which sit invisibly over
+   the canvas prompt / chip (positions in legacy design px from title.js placeDom). */
+html.mt-title-on .sv-menu .mn-vignette, html.mt-title-on .sv-menu .mn-top, html.mt-title-on .sv-menu .mn-center,
+html.mt-title-on .sv-menu .mn-mode, html.mt-title-on .sv-menu [data-kbd-hint], html.mt-title-on .sv-menu [data-touch-hint],
+html.mt-title-on .sv-menu .mt-tprompt, html.mt-title-on #mt-langpick .lp-lab, html.mt-title-on #mt-langpick .lp-key { display: none !important; }
+html.mt-title-on .sv-menu .mn-bottom { display: contents; }
+html.mt-title-on .sv-stage .sv-menu .mn-play { position: absolute; left: var(--mt-px, 0); top: var(--mt-py, 0); width: var(--mt-pw, 10px) !important; height: var(--mt-ph, 10px) !important;
+  margin: 0; padding: 0; opacity: 0; clip-path: none; filter: none; animation: none; transform: none; border: 0; background: none; cursor: pointer; }
+html.mt-title-on .sv-stage .sv-menu .mn-play::before, html.mt-title-on .sv-stage .sv-menu .mn-play::after { content: none; }
+html.mt-title-on #mt-langpick { position: absolute; left: var(--mt-cx, 0); top: var(--mt-cy, 0); width: var(--mt-cw, 10px); height: var(--mt-ch, 10px); display: flex; gap: 0; opacity: 0; margin: 0; }
+html.mt-title-on #mt-langpick .lp-opt { height: 100%; padding: 0; margin: 0; border: 0; border-radius: 0; box-sizing: border-box; flex: 1 1 0; min-width: 0; }
+html.mt-title-on #mt-langpick .lp-opt.ja { flex: 0 0 calc(var(--mt-cs, .6) * 100%); }
+
+/* software WebGL (title.js softGL): no CSS animation / transition on the menu screens (static frames, no compositor churn) */
+html.mt-swgl #mt-title, html.mt-swgl #mt-title *, html.mt-swgl #mt-lobby, html.mt-swgl #mt-lobby *, html.mt-swgl .sv-menu, html.mt-swgl .sv-menu * { animation: none !important; transition: none !important; }

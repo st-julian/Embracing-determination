@@ -1,0 +1,106 @@
+/* mt/ui/input/touch.css — touch controls (game/mt/ui/input/touch.js). Owner: input specialist.
+   Gen-5 look: cream discs with navy outlines, chunky drop shadow, pixel icons; sizes come from touch.js (--tb/--ta/--tu,
+   all >= 48 CSS px) and positions respect the safe areas (notch / home bar). */
+
+#mt-touch { position: fixed; inset: 0; z-index: 5; pointer-events: none; display: none;
+  --sl: env(safe-area-inset-left, 0px); --sr: env(safe-area-inset-right, 0px); --st: env(safe-area-inset-top, 0px); --sb: env(safe-area-inset-bottom, 0px);
+  --ink: #1b2350; --cream: #fffaf0; --cream2: #efe4c8; --gold: #ffd23a;
+  font: 800 13px/1 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink);
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none; -webkit-tap-highlight-color: transparent; }
+#mt-touch.on { display: block; }
+#mt-touch * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none; box-sizing: border-box; }
+html.lang-ja #mt-touch { font-family: 'Vale JP', system-ui, sans-serif; font-weight: 400; }
+
+/* ------------------------------------------------------------------ joystick (floating, left) */
+#mt-touch .joy { position: absolute; left: 0; top: 0; width: var(--jr2); height: var(--jr2); margin: calc(var(--jr2) / -2) 0 0 calc(var(--jr2) / -2);
+  border-radius: 50%; pointer-events: none; transition: opacity .18s;
+  background: radial-gradient(circle closest-side, rgba(255, 250, 240, .30), rgba(255, 250, 240, .12) 72%, rgba(255, 250, 240, 0) 100%);
+  box-shadow: inset 0 0 0 3px rgba(27, 35, 80, .55), inset 0 0 0 6px rgba(255, 250, 240, .45); opacity: .45; }
+#mt-touch .joy.act { opacity: 1; }
+#mt-touch .joy .knob { position: absolute; left: 50%; top: 50%; width: var(--jk); height: var(--jk); margin: calc(var(--jk) / -2) 0 0 calc(var(--jk) / -2);
+  border-radius: 50%; background: radial-gradient(circle at 38% 30%, #fff, #f4ecd8 58%, #d6c9a4); box-shadow: 0 0 0 3px var(--ink), 0 5px 0 rgba(14, 18, 44, .4); }
+#mt-touch .joy .arrow { position: absolute; left: 50%; top: 50%; width: 0; height: 0; border: 9px solid transparent; border-bottom: 14px solid rgba(255, 250, 240, .9);
+  margin: -23px 0 0 -9px; transform-origin: 9px 23px; opacity: 0; filter: drop-shadow(0 0 1px var(--ink)); }
+#mt-touch .joy.act .arrow { opacity: 1; }
+
+/* ------------------------------------------------------------------ buttons */
+#mt-touch .tb { position: absolute; width: var(--s); height: var(--s); margin: calc(var(--s) / -2) 0 0 calc(var(--s) / -2); border-radius: 50%;
+  pointer-events: auto; display: grid; place-items: center; background: radial-gradient(circle at 36% 28%, #fff 0, var(--cream) 42%, var(--cream2) 100%); left: 0; top: 0;
+  box-shadow: 0 0 0 3px var(--ink), 0 4px 0 3px rgba(14, 18, 44, .45), inset 0 -4px 0 rgba(27, 35, 80, .12);
+  transition: transform .08s, filter .15s, opacity .15s; }
+#mt-touch .tb.big { --s: var(--tb); background: radial-gradient(circle at 36% 28%, #fff4d6 0, #ffd56a 45%, #f0a636 100%); }
+#mt-touch .tb.mid { --s: var(--ta); }
+#mt-touch .tb.sm { --s: var(--tu); }
+#mt-touch .tb canvas.ic { width: 58%; height: 58%; image-rendering: pixelated; pointer-events: none; }
+#mt-touch .tb.big canvas.ic { width: 52%; height: 52%; }
+#mt-touch .tb .glyph { font-size: calc(var(--s) * .42); line-height: 1; pointer-events: none; }
+#mt-touch .tb .lab { position: absolute; left: 50%; bottom: calc(var(--s) * -0.2); transform: translateX(-50%); white-space: nowrap; pointer-events: none;
+  font-size: max(10px, calc(var(--s) * .18)); padding: 2px 5px 1px; border-radius: 6px; background: var(--ink); color: var(--cream); line-height: 1.05; }
+#mt-touch .tb.big .lab, #mt-touch .tb.mid .lab { display: none; } /* the three main buttons read by icon (Wild Rift style); utility buttons keep a name tag */
+#mt-touch .tb .cd { position: absolute; inset: 0; border-radius: 50%; pointer-events: none; display: none;
+  background: conic-gradient(rgba(14, 18, 44, .72) calc(var(--p, 0) * 360deg), rgba(14, 18, 44, .18) 0); }
+#mt-touch .tb .num { position: absolute; inset: 0; display: none; place-items: center; pointer-events: none; color: #fff; font-size: calc(var(--s) * .36);
+  text-shadow: 0 2px 0 var(--ink), 0 0 3px var(--ink); }
+#mt-touch .tb.cool .cd, #mt-touch .tb.cool .num { display: grid; }
+#mt-touch .tb.cool .cd { display: block; }
+#mt-touch .tb.off { filter: grayscale(1) brightness(.85); opacity: .55; }
+#mt-touch .tb.lock { filter: grayscale(1) brightness(.8); opacity: .5; }
+#mt-touch .tb.lock:after { content: attr(data-lv); position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-size: calc(var(--s) * .26);
+  text-shadow: 0 2px 0 var(--ink); }
+#mt-touch .tb.down { transform: scale(.9); filter: brightness(1.08); }
+#mt-touch .tb.flash { animation: mtTbFlash .45s ease-out; }
+@keyframes mtTbFlash { 0% { box-shadow: 0 0 0 3px var(--ink), 0 0 0 10px rgba(255, 210, 58, .9); } 100% { box-shadow: 0 0 0 3px var(--ink), 0 4px 0 3px rgba(14, 18, 44, .45); } }
+#mt-touch .tb.hidden { display: none; }
+#mt-touch .tb.evo { background: radial-gradient(circle at 36% 28%, #fff 0, #ffe36a 45%, #f5b400 100%); animation: mtEvo 1s ease-in-out infinite; }
+@keyframes mtEvo { 50% { transform: scale(1.1); box-shadow: 0 0 0 3px var(--ink), 0 0 18px 6px rgba(255, 220, 90, .85); } }
+#mt-touch .tb.on { box-shadow: 0 0 0 3px var(--ink), 0 0 0 7px var(--gold), 0 4px 0 7px rgba(14, 18, 44, .35); }
+/* hold progress ring (recall / target clear) */
+#mt-touch .tb .hold { position: absolute; inset: -7px; border-radius: 50%; pointer-events: none; display: none;
+  background: conic-gradient(var(--gold) calc(var(--h, 0) * 360deg), transparent 0); -webkit-mask: radial-gradient(closest-side, transparent 80%, #000 81%); mask: radial-gradient(closest-side, transparent 80%, #000 81%); }
+#mt-touch .tb.holding .hold { display: block; }
+/* drag-to-aim: a ring around the button with a knob that follows the finger; centre = cancel */
+#mt-touch .tb .aimr { position: absolute; left: 50%; top: 50%; width: calc(var(--aimR) * 2); height: calc(var(--aimR) * 2); margin: calc(var(--aimR) * -1) 0 0 calc(var(--aimR) * -1);
+  border-radius: 50%; display: none; pointer-events: none; border: 3px dashed rgba(255, 250, 240, .95); box-shadow: 0 0 0 2px rgba(14, 18, 44, .8), inset 0 0 0 2px rgba(14, 18, 44, .8); }
+#mt-touch .tb .aimk { position: absolute; left: 50%; top: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%; display: none; pointer-events: none;
+  background: var(--gold); box-shadow: 0 0 0 3px var(--ink), 0 0 0 5px rgba(255, 250, 240, .85); }
+#mt-touch .tb.aiming .aimr, #mt-touch .tb.aiming .aimk { display: block; }
+#mt-touch .tb.cancel .aimk { background: #ff5a4a; }
+#mt-touch .tb.cancel:before { content: "✕"; position: absolute; top: calc(var(--s) * -0.62); left: 50%; transform: translateX(-50%); color: #fff; background: #d2382a;
+  border-radius: 8px; padding: 3px 7px; font-size: 14px; box-shadow: 0 0 0 2px var(--ink); }
+
+/* ------------------------------------------------------------------ top-left system buttons */
+#mt-touch .sys { position: absolute; left: calc(var(--sl) + 10px); top: calc(var(--st) + 8px); display: flex; gap: 8px; pointer-events: none; }
+#mt-touch .sys2 { position: absolute; left: calc(var(--sl) + 10px); top: calc(var(--st) + 8px + var(--tu) + 12px); display: flex; gap: 10px; pointer-events: none; }
+#mt-touch .sys.hidden { display: none; }
+#mt-touch .sys .tb, #mt-touch .sys2 .tb { position: relative; margin: 0; }
+#mt-touch .tb.sys-b { border-radius: 14px; background: linear-gradient(#2c3a7a, #1b2350); color: var(--cream); box-shadow: 0 0 0 2px var(--cream), 0 4px 0 2px rgba(14, 18, 44, .5); }
+#mt-touch .tb.sys-b .glyph { font-size: calc(var(--s) * .44); }
+
+/* ------------------------------------------------------------------ capture chance badge */
+#mt-touch .chance { position: absolute; left: 0; top: 0; width: 64px; height: 64px; margin: -32px 0 0 -32px; border-radius: 50%; display: none; pointer-events: none;
+  background: conic-gradient(var(--cc, #ffd23a) calc(var(--p, 0) * 360deg), rgba(27, 35, 80, .35) 0);
+  -webkit-mask: radial-gradient(closest-side, transparent 74%, #000 75%); mask: radial-gradient(closest-side, transparent 74%, #000 75%); }
+#mt-touch .chance.on, #mt-touch .chlab.on { display: block; }
+#mt-touch .chlab { position: absolute; left: 0; top: 0; transform: translate(-50%, -100%); display: none; pointer-events: none; white-space: nowrap;
+  background: var(--cream); border: 2px solid var(--ink); border-radius: 8px; padding: 3px 7px 2px; font-size: 13px; box-shadow: 0 3px 0 rgba(14, 18, 44, .4); }
+#mt-touch .chlab b { color: var(--cc, #c98a00); }
+
+/* ------------------------------------------------------------------ rotate prompt (portrait on a touch device) */
+#mt-rotate { position: fixed; inset: 0; z-index: 50; display: none; place-items: center; background: radial-gradient(circle at 50% 40%, #2c3a7a, #0e1230);
+  color: #fffaf0; text-align: center; font: 800 18px/1.4 system-ui, sans-serif; pointer-events: auto; touch-action: none; }
+#mt-rotate.on { display: grid; }
+html.lang-ja #mt-rotate { font-family: 'Vale JP', system-ui, sans-serif; font-weight: 400; }
+#mt-rotate .ph { width: 64px; height: 108px; margin: 0 auto 22px; border: 5px solid #fffaf0; border-radius: 12px; position: relative; animation: mtRot 2.2s ease-in-out infinite; }
+#mt-rotate .ph:after { content: ""; position: absolute; left: 50%; bottom: 6px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: #fffaf0; }
+@keyframes mtRot { 0%, 25% { transform: rotate(0deg); } 55%, 100% { transform: rotate(-90deg); } }
+
+/* ------------------------------------------------------------------ the rest of the page while touch is active */
+body.mt-touchui { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: none; overscroll-behavior: none; }
+body.mt-touchui .sv-joystick, body.mt-touchui .sva-root, body.mt-touchui .sv-cancel { display: none !important; }
+/* lobby / menus: finger-sized hit targets */
+body.mt-touchui #mt-lobby .val .ar { min-width: 40px; min-height: 40px; font-size: 14px; border-radius: 9px; }
+body.mt-touchui #mt-lobby .val .v { min-height: 32px; }
+body.mt-touchui #mt-lobby .row { padding: 1px 4px; }
+body.mt-touchui #mt-lobby .card.empty .big .g { min-width: 30px; height: 30px; }
+body.mt-touchui #mt-lobby .readybtn { min-height: 48px; display: grid; place-items: center; }
+body.mt-touchui #mt-lobby .chip.lang { min-height: 40px; display: inline-flex; align-items: center; }
