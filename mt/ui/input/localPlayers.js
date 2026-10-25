@@ -62,7 +62,17 @@ export class LocalPlayers {
   rebuild(w) {
     const L = [];
     const used = new Set();
-    const humans = (w.players || []).filter((p) => !p.bot);
+    // online match (mt/net/online.js): every human is bot:false, but only ONE is on this machine — app.mtNetLocal =
+    // {slot, device, inputType, padId, wasd} names it (roster entries carry netSlot); remote humans keep their look
+    const net = this.app.mtNetLocal;
+    if (net) {
+      for (const p of w.players || []) {
+        if (p.bot || p.netSlot == null) continue;
+        if (p.netSlot === net.slot) Object.assign(p, { device: net.device || 'kbm', localSlot: 0, inputType: net.inputType || (net.device && net.device.startsWith('pad:') ? 'gamepad' : 'kbm'), padId: net.padId || '', wasd: !!net.wasd });
+        else { const u = w.units.get(p.unitId); if (u) u.mtLook = p.look || p.spec; }
+      }
+    }
+    const humans = (w.players || []).filter((p) => !p.bot && !(net && p.netSlot != null && p.netSlot !== net.slot));
     for (const p of humans) if (Number.isInteger(p.localSlot) && p.localSlot >= 0 && p.localSlot < 4 && !used.has(p.localSlot)) used.add(p.localSlot); else p.localSlot = -1;
     for (const p of humans) {
       if (p.localSlot < 0) { let s = 0; while (used.has(s)) s++; p.localSlot = s; used.add(s); }
@@ -139,6 +149,7 @@ export class LocalPlayers {
    */
   joinPad(pad) {
     const app = this.app, w = app.world; if (!w) return null;
+    if (app.mtNet && app.mtNet.active) return null; // online: the roster is shared by every peer (no drop-in)
     const dev = 'pad:' + pad.index;
     if (this.byDevice(dev)) return this.byDevice(dev);
     if (app.locals.length >= 4) return null;
@@ -161,6 +172,7 @@ export class LocalPlayers {
   /** Give a local's trainer back to the bots (not the last local). */
   leave(slot) {
     const app = this.app, l = this.bySlot(slot); if (!l || app.locals.length <= 1) return false;
+    if (app.mtNet && app.mtNet.active) return false; // online: unit.bot changes only through the lockstep (takeover)
     const u = app.world && app.world.units.get(l.unitId);
     if (u) { u.bot = true; u.mtLocal = undefined; }
     const p = app.world && app.world.players.find((q) => q.unitId === l.unitId); if (p) p.bot = true;
@@ -173,14 +185,15 @@ export class LocalPlayers {
     const l = this.byDevice('pad:' + index); if (!l) return;
     l.connected = false;
     const u = this.app.world && this.app.world.units.get(l.unitId);
-    if (u && this.app.state === 'game') u.bot = true; // keep the trainer playing until the pad comes back
+    const online = !!(this.app.mtNet && this.app.mtNet.active); // online: a local unplug must not change the shared sim
+    if (u && this.app.state === 'game' && !online) u.bot = true; // keep the trainer playing until the pad comes back
     this.app.fire('locals', this.app.locals);
   }
   padBack(gp) {
     const l = this.byDevice('pad:' + gp.index); if (!l || l.connected) return;
     l.connected = true;
     const u = this.app.world && this.app.world.units.get(l.unitId);
-    if (u) u.bot = false;
+    if (u && !(this.app.mtNet && this.app.mtNet.active)) u.bot = false;
     this.app.fire('locals', this.app.locals);
   }
 }

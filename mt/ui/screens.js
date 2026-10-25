@@ -136,6 +136,8 @@ export class PauseMenu {
     if (on === this.open) return;
     this.open = on; this.el.hidden = !on;
     if (on) { this.focus = 0; this.armLeave(false); this.buildKeys(); this.sync(); this.setPaused(true); this.prevPad = this.padSig(); }   // buttons already down don't act
+    // online match (mt/net/online.js): the menu opens but the shared match keeps running (app.paused reads false)
+    if (on) { const net = this.app.mtNet && this.app.mtNet.active; this.phT.nodeValue = net ? tr('net.pause', 'Online match — the game keeps running') : tr('pause.title', 'Paused'); }
     else this.setPaused(false);
   }
   setPaused(p) { const a = this.app; if (a.setPaused) a.setPaused(p); else a.paused = p; }

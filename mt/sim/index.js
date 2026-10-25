@@ -8,6 +8,7 @@
 // `L` (the legacy API) is an object of internal bundle functions/tables handed over by the bundle at
 // construction time; see the typedef below and README.md "Legacy API".
 
+import '../net/importmath.js'; // FIRST: module-level Math (ai/geo.js lane lengths) gets the same bits on every engine (online lockstep)
 import { MT_EVENT } from './events.js';
 import * as trainers from './trainers.js';
 import * as monsters from './monsters.js';
@@ -24,6 +25,7 @@ import * as DATA_TYPES from '../data/types.js';
 import * as DATA_SPECIES from '../data/species.js';
 import * as DATA_ABILITIES from '../data/abilities.js';
 import * as DATA_BALANCE from '../data/balance.js';
+import '../net/importmath-end.js'; // LAST: native Math again (see ../net/importmath.js)
 
 /**
  * @typedef {Object} LegacyAPI  internal functions of the legacy bundle (minified name in parentheses)
@@ -89,6 +91,7 @@ export class MTWorld {
     this.errors = {};
     this.legacyBotPhase = false;   // true while the legacy bot brain is issuing commands (see ai/trainerBot.js)
     this.nextRid = 1;
+    this.net = null;               // online NetSession (mt/net/lockstep.js) while this world plays an online match
     this.modules = [trainers, monsters, capture, progression, combat, minions, structures, jungle, trainerBot, debug];
     for (const m of this.modules) if (m.install) m.install(this);
   }
@@ -137,6 +140,9 @@ export class MTWorld {
   /** [MT-HOOK] command — returns true/false to handle, undefined to let legacy process the command. */
   command(unit, cmd) {
     if (!unit || !cmd || typeof cmd !== 'object') return undefined;
+    // online lockstep (mt/net/lockstep.js, set by mt/net/online.js): local human input is queued for tick + D and
+    // applied on every peer in the same order; returns true/false then, undefined = handle now (bots, replay)
+    if (this.net) { const q = this.net.intercept(unit, cmd); if (q !== undefined) return q; }
     return this.guard('command', () => this.impl.command(this, unit, cmd));
   }
   /** [MT-HOOK] unitAI — per-unit behaviour for units flagged `mtCtl` (pets, capturing/evolving monsters). */

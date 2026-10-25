@@ -8,17 +8,20 @@ import { GamepadInput } from './input/gamepad.js';
 import { MtHud } from './hud.js';
 import { Lobby } from './lobby.js';
 import { TitleScreen } from './title.js'; // front-end screens: staged title (additive)
+import { NetController } from '../net/online.js'; // online play (claude.ai room capability): app.mtNet (additive)
 
 export default class MtUi {
   constructor(ctx) {
     this.ctx = ctx; this.parts = []; this.errors = {};
     this.locals = new LocalPlayers(ctx);
+    try { this.net = new NetController(ctx); } catch (e) { console.error('[mt-ui] ctor net', e); this.net = null; } // before the lobby (it reads app.mtNet)
     const add = (name, make) => { try { const inst = make(); this.parts.push({ name, inst, fails: 0 }); return inst; } catch (e) { console.error('[mt-ui] ctor ' + name, e); return null; } };
     this.keyboard = add('keyboard', () => new KeyboardInput(ctx, this.locals));
     this.gamepad = add('gamepad', () => new GamepadInput(ctx, this.locals));
     this.hud = add('hud', () => new MtHud(ctx));
     this.lobby = add('lobby', () => new Lobby(ctx));
     this.title = add('title', () => new TitleScreen(ctx)); // front-end screens (additive)
+    if (this.net) this.parts.push({ name: 'net', inst: this.net, fails: 0 }); // online: room polling, presence, overlays (additive)
     // ?mtscenario=<name>: boot straight into an mt.debug.setup fixture (screenshots / manual testing)
     const sc = ctx.app.params && ctx.app.params.get('mtscenario');
     if (sc && ctx.app.mt && ctx.app.mt.debug) {

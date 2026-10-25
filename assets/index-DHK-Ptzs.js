@@ -50354,9 +50354,10 @@ function qk(e) {
   let o = $.state === `game` || $.state === `menu` || $.state === `end` || $.state === `lobby`; // [MT-HOOK] lobby (backdrop world keeps running)
   if (!$.paused && o) {
     Wk += r * $.timeScale;
+    $.mtNet && $.mtNet.active && (Wk = $.mtNet.pace(Wk, r)); // [MT-HOOK] netPace (online lockstep: drift correction + stall backlog clamp, mt/net/online.js)
     let e = 0;
     for (; Wk >= 0.03333333333333333 && e < 8; ) {
-      i.tick();
+      if ($.mtNet && $.mtNet.active ? !$.mtNet.step(i) : (i.tick(), !1)) break; // [MT-HOOK] netGate (online: tick T runs only when every peer's inputs for T are known)
       for (let e of i.events) a.push(e);
       ((Wk -= n), e++);
     }
