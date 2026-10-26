@@ -1,4 +1,5 @@
 // mt/ui/dom.js — tiny DOM helpers for the mt HUD (hyperscript + diff-gated setters). Owner: HUD.
+import { voxelBlit, voxelRestore } from '../voxel/units/portraits.js';   // [voxel]
 
 /** h('div.a.b', {attrs}, ...children) — children: Node | string | null */
 export function h(sel, attrs, ...kids) {
@@ -33,6 +34,7 @@ export function pxCanvas(w, h2, cls = '') {
 }
 /** Draw a source canvas into a pixel canvas, centred, no smoothing. */
 export function blit(dst, src, dx = 0, dy = 0) {
+  if (src && src.mtVoxelImg) return voxelBlit(dst, src.mtVoxelImg); else if (dst.dataset && dst.dataset.mtBw) voxelRestore(dst);   // [voxel] voxel portraits at device resolution
   const g = dst.getContext('2d'); g.imageSmoothingEnabled = false; g.clearRect(0, 0, dst.width, dst.height);
   if (src) g.drawImage(src, Math.round((dst.width - src.width) / 2) + dx, Math.round((dst.height - src.height) / 2) + dy);
 }

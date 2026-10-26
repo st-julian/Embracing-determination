@@ -186,8 +186,8 @@ export class SharedCamera {
     let vx = (u.x - u.prevX) * 30, vy = (u.y - u.prevY) * 30; if (u.dash) { vx *= 0.35; vy *= 0.35; }
     let lx = vx * LEAD_T, ly = vy * LEAD_T; const ll = Math.hypot(lx, ly); if (ll > LEAD_MAX) { lx *= LEAD_MAX / ll; ly *= LEAD_MAX / ll; }
     // fight-aware: lean (smoothed, ≤ FIGHT_MAX m) toward visible enemy trainers / monsters nearby so the fight is in frame
-    let ex = 0, ey = 0, en = 0;
-    for (const e of w.queryUnits(u.x, u.y, FIGHT_R, (q) => q.alive && q.team !== u.team && q.team !== 2 && (q.kind === 'champion' || q.kind === 'monster') && (!q.visible || q.visible[u.team] !== false), [])) { ex += e.x; ey += e.y; en++; }
+    let ex = 0, ey = 0, en = 0, eLo = Infinity, eHi = -Infinity; // eLo..eHi: x span of the enemies within 12 m (touch keeps them on screen)
+    for (const e of w.queryUnits(u.x, u.y, FIGHT_R, (q) => q.alive && q.team !== u.team && q.team !== 2 && (q.kind === 'champion' || q.kind === 'monster') && (!q.visible || q.visible[u.team] !== false), [])) { ex += e.x; ey += e.y; en++; if (Math.hypot(e.x - u.x, e.y - u.y) < 12) { eLo = Math.min(eLo, e.x); eHi = Math.max(eHi, e.x); } }
     const fmax = app.mtInputMode === 'touch' ? FIGHT_MAX * 0.7 : FIGHT_MAX; // touch: the trainer must not slide toward the thumbs
     if (en) { let fx = (ex / en - u.x) * 0.25, fy = (ey / en - u.y) * 0.25; const fl = Math.hypot(fx, fy); if (fl > fmax) { fx *= fmax / fl; fy *= fmax / fl; } lx += fx; ly += fy; }
     // safe rect (screen fractions) the trainer + its monster must stay in: clear of the top bar, the bottom card and —
@@ -196,7 +196,11 @@ export class SharedCamera {
     const ext = this.extents(rig, 1);
     const G = R.group || R; // the rect the whole group (trainer + monster) must fit in; the trainer itself stays in R
     const needX = ((maxX - minX) / 2 + SOLO_MARGIN_X) / (ext.hw * (G.x1 - G.x0)), needY = ((maxY - minY) + MARGIN_N + MARGIN_S) / (2 * ext.hh * (G.y1 - G.y0));
-    this.zoomTo(rig, Math.min(SOLO_ZOOM_MAX, Math.max(1, needX, needY)), dt, !this.owned);
+    // [voxel] touch: the enemies of the fight (within 12 m) stay on screen too (x 7–93 %) while the trainer keeps its rect — zoom out
+    // for them (a little past SOLO_ZOOM_MAX: the trainer may not move toward the thumbs, so a foe ~12 m to the side needs it)
+    const foes = R.touch && eHi >= eLo;
+    const needF = foes ? Math.max((eHi - ux + 1.2) / ((0.93 - R.x0) * 2 * ext.hw), (ux - eLo + 1.2) / ((R.x1 - 0.07) * 2 * ext.hw)) : 0;
+    this.zoomTo(rig, Math.min(foes ? SOLO_ZOOM_MAX * 1.12 : SOLO_ZOOM_MAX, Math.max(1, needX, needY, needF)), dt, !this.owned);
     const ez = this.extents(rig, rig.zoom);
     // the point put at (R.cx, R.cy): between the group box (sprite-height margin north) and the trainer-weighted centre;
     // touch weights the trainer itself (the thing you steer stays at the rest point, the monster roams around it)
@@ -216,6 +220,7 @@ export class SharedCamera {
       const yLo = y1 + MARGIN_S * 0.5 - (Q.y1 - 0.5) * 2 * ez.hh, yHi = y0 - MARGIN_N - (Q.y0 - 0.5) * 2 * ez.hh;
       ty = yLo <= yHi ? Math.min(yHi, Math.max(yLo, ty)) : (yLo + yHi) / 2;
     };
+    if (foes) { const fLo = eHi + 0.8 - (0.93 - 0.5) * 2 * ez.hw, fHi = eLo - 0.8 - (0.07 - 0.5) * 2 * ez.hw; if (fLo <= fHi) tx = Math.min(fHi, Math.max(fLo, tx)); } // x 7–93 % (the group + trainer clamps below still win)
     clampTo(G, minX, maxX, minY, maxY);
     if (G !== R) clampTo(R, ux, ux, uy, uy);
     tx = Math.min(MAP_MAX, Math.max(MAP_MIN, tx)); ty = Math.min(MAP_MAX, Math.max(MAP_MIN, ty));

@@ -1,6 +1,6 @@
 // mt/voxel/units/index.js — voxel unit runtime (owner: voxel units runtime). Every unit the sprite system would draw as
 // a 2D billboard is drawn as an animated voxel model instead when the voxel world style is on (app.mtWorldStyle ===
-// 'voxel', or ?world=voxel). SpriteSystem keeps doing everything around the unit (visibility / fog, team marks and the
+// 'voxel'; the default unless ?world=3d). SpriteSystem keeps doing everything around the unit (visibility / fog, team marks and the
 // own-unit pulse, wading depth, x-ray occlusion test, hit blink and evolution flash values, fx overrides) and hands the
 // result to unit() here instead of pushing a sprite quad; capture orbs in flight and the capture flourishes come here too.
 //
@@ -33,7 +33,9 @@ import { placeholderModel } from './placeholder.js';
 let MODELS = null, modelsTried = false;
 function loadModels() {
   if (modelsTried) return; modelsTried = true;
-  import('../models/index.js').then((m) => { MODELS = m.MODELS || m.default || null; }, () => { MODELS = null; });
+  // the registry is used only once its baked data is in (models/index.js ready(): no live voxelising mid-match);
+  // placeholders stand in until then
+  import('../models/index.js').then((m) => Promise.resolve(typeof m.ready === 'function' ? m.ready() : null).then(() => { MODELS = m.MODELS || m.default || null; }), () => { MODELS = null; });
 }
 if (typeof window !== 'undefined') { try { const q = new URLSearchParams(location.search).get('world'); if (q !== '3d') loadModels(); } catch (e) { /* no location */ } }   // at boot: models ready for the first match
 
