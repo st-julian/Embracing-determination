@@ -1,6 +1,6 @@
 // mt/voxel/units/index.js — voxel unit runtime (owner: voxel units runtime). Every unit the sprite system would draw as
 // a 2D billboard is drawn as an animated voxel model instead when the voxel world style is on (app.mtWorldStyle ===
-// 'voxel'; the default unless ?world=3d). SpriteSystem keeps doing everything around the unit (visibility / fog, team marks and the
+// 'voxel', i.e. ?world=voxel; 3D is the default). SpriteSystem keeps doing everything around the unit (visibility / fog, team marks and the
 // own-unit pulse, wading depth, x-ray occlusion test, hit blink and evolution flash values, fx overrides) and hands the
 // result to unit() here instead of pushing a sprite quad; capture orbs in flight and the capture flourishes come here too.
 //
@@ -29,6 +29,7 @@
 // monster shrinks into a voxel orb with a red-white flash, the orb wobbles, then bursts (success: gold, fail: shards).
 import { meshArrays, VOXEL_M, VoxelModel } from '../kit.js';
 import { placeholderModel } from './placeholder.js';
+import { VDIAG, watchShaders } from './diag.js';
 
 let MODELS = null, modelsTried = false;
 function loadModels() {
@@ -37,7 +38,7 @@ function loadModels() {
   // placeholders stand in until then
   import('../models/index.js').then((m) => Promise.resolve(typeof m.ready === 'function' ? m.ready() : null).then(() => { MODELS = m.MODELS || m.default || null; }), () => { MODELS = null; });
 }
-if (typeof window !== 'undefined') { try { const q = new URLSearchParams(location.search).get('world'); if (q !== '3d') loadModels(); } catch (e) { /* no location */ } }   // at boot: models ready for the first match
+if (typeof window !== 'undefined') { try { const q = new URLSearchParams(location.search).get('world'); if (q === 'voxel') loadModels(); } catch (e) { /* no location */ } }   // at boot: models ready for the first match
 
 /** sprite-era visible height above the feet (m) per art id (team suffix stripped) — from mt/render/sprites.js's raster
  *  rule (idle frame anchor height × ART_SCALE 1.25 × raster size multiplier / PPM 32). Regenerate if the sprite art changes. */
@@ -63,8 +64,8 @@ let VIEWPORT = { value: null };     // the scene render target size (the sprite 
 /** the shared program: Lambert + vertex colours, with per-unit flash (toward warm white), tint, dissolve, emissive fx,
  *  and the outline hull: vertices flagged aHull are a reversed-winding copy of the surface (smoothed normals) pushed out
  *  uOutlinePx scene px in screen space and painted a dark shade of the local colour — the BW-style sprite outline. */
-function unitMaterial(THREE) {
-  const m = new THREE.MeshLambertMaterial({ vertexColors: true });
+function unitMaterial(THREE, skinned = true) {
+  const m = new THREE.MeshLambertMaterial({ vertexColors: true }); m.name = skinned ? 'mt-voxel-unit' : 'mt-voxel-orb';
   const U = m.userData.mt = { uFlash: { value: 0 }, uTint: { value: new THREE.Vector4(0, 0, 0, 0) }, uDis: { value: 0 }, uGlow: { value: 1 }, uTime: TIME, uOutlinePx: OUTLINE_PX, uViewport: VIEWPORT };
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
@@ -80,7 +81,9 @@ function unitMaterial(THREE) {
         + '  gl_FragColor.rgb = mix(gl_FragColor.rgb, uTint.rgb, uTint.a);\n  gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.97, 0.9), uFlash);\n'
         + '  if (vMtHull > 0.5) gl_FragColor.rgb = vColor.rgb * 0.12 + vec3(0.005, 0.003, 0.01) + uFlash * 0.25;');
   };
-  m.customProgramCacheKey = () => 'mt-voxel-unit-v3';
+  // the key names the skinning state too (the units are SkinnedMesh, the orbs plain Mesh): never one program for both
+  const key = 'mt-voxel-unit-v4-' + (skinned ? 'skin' : 'mesh');
+  m.customProgramCacheKey = () => key;
   return m;
 }
 
@@ -114,7 +117,7 @@ export class VoxelUnits {
     if (!VIEWPORT.value) VIEWPORT.value = new T.Vector2(1, 1);
     // capture orbs (in flight, and on a monster being caught): plain meshes from a pool
     this.orbGeo = this.mergedGeometry({ parts: { body: { model: orbModel(), pivot: [3.5, 0, 3.5], at: [0, 0, 0] } } }).geometry;
-    this.orbMat = unitMaterial(T); this.orbPool = []; this.orbUsed = 0;
+    this.orbMat = unitMaterial(T, false); this.orbPool = []; this.orbUsed = 0;
     // capture flourish particles: one instanced box mesh
     const N = 256, pg = new T.BoxGeometry(VOXEL_M * 0.9, VOXEL_M * 0.9, VOXEL_M * 0.9);
     this.parts = new T.InstancedMesh(pg, new T.MeshBasicMaterial({ toneMapped: false }), N);
@@ -124,7 +127,7 @@ export class VoxelUnits {
     this.particles = []; this.dummy = new T.Object3D(); this.col = new T.Color();
     loadModels();
     const app = ctx.app || (typeof window !== 'undefined' ? window.__moba : null);
-    if (app) { app.mtVoxelUnits = this; app.mtVoxel = Object.assign({ outline: true, outlinePx: 1.5 }, app.mtVoxel || {}); }
+    if (app) { app.mtVoxelUnits = this; app.mtVoxelDiag = VDIAG; app.mtVoxel = Object.assign({ outline: true, outlinePx: 1.5 }, app.mtVoxel || {}); }
   }
 
   // ---- models ---------------------------------------------------------------------------------------------------
@@ -265,6 +268,7 @@ export class VoxelUnits {
   // ---- per frame --------------------------------------------------------------------------------------------------
   begin(f, now) {
     this.frame++; this.now = now; this.active = true; this.root.visible = true;
+    if (this.frame === 1 || this.frame % 30 === 0) this.check();
     // the game frame's dt (fixed-step captures animate like the real loop); wall time only as a fallback
     const t = typeof performance !== 'undefined' ? performance.now() / 1000 : now;
     this.dt = f && f.dt > 0 ? Math.min(0.1, f.dt) : this.lastT ? Math.min(0.1, Math.max(0, t - this.lastT)) : 0.016; this.lastT = t;
@@ -471,6 +475,90 @@ export class VoxelUnits {
     this.stats.particles = n; if (n) this.stats.draws++;
     this.tickDisplay(dt);
   }
+  // ---- self-checks: units are never invisible -----------------------------------------------------------------
+  /** frame 1: watch shader errors + the offscreen self-test; then every 30 frames (first ~30 s): the unit programs'
+   *  link diagnostics and finite unit transforms. Any failure -> units fall back to sprites for the session. */
+  check() {
+    const r = this.ctx.renderer; if (!r) return;
+    if (this.frame === 1) {
+      watchShaders(r);
+      VDIAG.selfTest = this.selfTest();
+      if (!VDIAG.selfTest.ok) return this.fallback('self-test: ' + (VDIAG.selfTest.error || 'nothing drawn (coverage ' + VDIAG.selfTest.coverage + ')'));
+    }
+    if (this.frame > 900) return;
+    let n = 0, bad = null;
+    for (const p of (r.info && r.info.programs) || []) {
+      if (String(p.cacheKey || '').indexOf('mt-voxel-unit') < 0) continue;
+      n++; const d = p.diagnostics; if (d && d.runnable === false) bad = 'program ' + p.name + ': ' + String(d.programLog || (d.vertexShader && d.vertexShader.log) || (d.fragmentShader && d.fragmentShader.log) || '').trim().slice(0, 160);
+    }
+    if (!bad && VDIAG.shaderErrors.some((e) => e.unit)) bad = 'unit shader error';
+    let nonFinite = 0, k = 0;
+    for (const I of this.inst.values()) { if (k++ > 8) break; const e = I.root.matrixWorld.elements; if (!(Number.isFinite(e[0]) && Number.isFinite(e[5]) && Number.isFinite(e[12]) && Number.isFinite(e[13]) && Number.isFinite(e[14]) && Number.isFinite(I.g.fit))) nonFinite++; }
+    if (!bad && nonFinite) bad = nonFinite + ' unit transform(s) not finite';
+    VDIAG.programCheck = { frame: this.frame, unitPrograms: n, bad };
+    if (bad) this.fallback(bad);
+  }
+  fallback(reason) {
+    const app = this.ctx.app || (typeof window !== 'undefined' ? window.__moba : null);
+    VDIAG.fallback = reason;
+    let keep = false; try { keep = app && app.params && app.params.get && app.params.get('units') === 'voxel'; } catch (e) { keep = false; }
+    console.warn('[mt-voxel] ' + (keep ? '(?units=voxel: kept) ' : 'units fall back to sprites: ') + reason);
+    if (keep || !app) return;
+    app.mtVoxelUnitsOff = reason; this.hide();
+  }
+  /** one skinned orb (the units' exact path: pooled view, skeleton + bone texture, unit material, LOD shadow range) drawn
+   *  into a 16x16 target; ok = it covers the middle of it */
+  selfTest() {
+    const T = this.T, r = this.ctx.renderer, res = { ok: false };
+    if (!T.WebGLRenderTarget || !r.readRenderTargetPixels) return { ok: true, skipped: true };
+    let rt = null, I = null, M = null;
+    const prevRT = r.getRenderTarget(), prevCC = r.getClearColor(new T.Color()), prevCA = r.getClearAlpha(), prevNU = r.shadowMap.needsUpdate;
+    try {
+      M = this.mergedGeometry({ parts: { body: { model: orbModel(), pivot: [3.5, 0, 3.5], at: [0, 0, 0] } } }, { hull: true, lod: true });
+      const g = { key: 'selftest', ...M, sphere: M.geometry.boundingSphere.clone(), height: 0.7, fit: 1 };
+      I = this.makeInstance(g); I.root.removeFromParent(); I.geo.setDrawRange(0, g.nMain);
+      I.pose.position.y = 0.05; I.root.updateMatrixWorld(true);
+      const scene = new T.Scene(), sun = new T.DirectionalLight(0xffffff, 2);
+      sun.position.set(1, 3, 2); sun.castShadow = true; sun.shadow.mapSize.set(64, 64);
+      scene.add(new T.AmbientLight(0xffffff, 1), sun, I.root);
+      const cam = new T.OrthographicCamera(-0.6, 0.6, 0.6, -0.6, 0.1, 20); cam.position.set(0, 0.4, 5); cam.lookAt(0, 0.4, 0);
+      rt = new T.WebGLRenderTarget(16, 16);
+      r.setRenderTarget(rt); r.setClearColor(0xff00ff, 0); r.clear(true, true, true);
+      r.render(scene, cam);
+      const px = new Uint8Array(16 * 16 * 4); r.readRenderTargetPixels(rt, 0, 0, 16, 16, px);
+      let n = 0; for (let i = 3; i < px.length; i += 4) if (px[i] > 128) n++;
+      const c = (8 * 16 + 8) * 4;
+      res.coverage = +(n / 256).toFixed(3); res.center = [px[c], px[c + 1], px[c + 2], px[c + 3]];
+      res.ok = n >= 16 && px[c + 3] > 128;
+      for (const p of (r.info && r.info.programs) || []) if (String(p.cacheKey || '').indexOf('mt-voxel-unit') >= 0 && p.diagnostics && p.diagnostics.runnable === false) { res.ok = false; res.error = 'unit program not runnable'; }
+    } catch (e) { res.error = String((e && e.message) || e).slice(0, 200); res.ok = false; }
+    finally {
+      try { r.setRenderTarget(prevRT); r.setClearColor(prevCC, prevCA); r.shadowMap.needsUpdate = prevNU; } catch (e) { /* keep going */ }
+      if (rt) rt.dispose();
+      if (I) { I.root.removeFromParent(); I.mat.dispose(); if (I.skeleton && I.skeleton.boneTexture) I.skeleton.boneTexture.dispose(); if (I.geo) I.geo.dispose(); }
+      if (M) M.geometry.dispose();
+    }
+    return res;
+  }
+  /** ?diag=1 overlay: models, counts, the first drawn unit's transform / bounds / draw range */
+  diagInfo() {
+    const o = { modelsReady: !!MODELS, modelsTried, active: this.active, rootVisible: this.root.visible, inScene: !!this.root.parent, frame: this.frame, built: this.geo.size, ...this.stats };
+    let vis = 0, first = null;
+    for (const [id, I] of this.inst) {
+      if (I.seen !== this.frame || !I.root.visible) continue; vis++;
+      if (!first) {
+        const m = I.root, e = m.matrixWorld.elements, s = I.g.sphere, sk = I.skeleton;
+        first = { id, key: I.g.key, placeholder: I.g.placeholder, fit: +(+I.g.fit).toFixed(3), pos: [e[12], e[13], e[14]].map((v) => +(+v).toFixed(2)), scale: +(+m.scale.x).toFixed(3),
+          sphere: s ? [s.center.x, s.center.y, s.center.z, s.radius].map((v) => +(+v).toFixed(2)) : null, drawRange: [I.geo.drawRange.start, I.geo.drawRange.count],
+          nMain: I.g.nMain, nHull: I.g.nHull, verts: I.geo.attributes.position.count, index: I.geo.index ? I.geo.index.array.constructor.name : null,
+          bones: sk ? sk.bones.length : 0, boneTex: sk && sk.boneTexture ? sk.boneTexture.image.width : null, frustumCulled: m.frustumCulled,
+          program: (() => { try { const p = this.ctx.renderer.properties.get(I.mat); return p && p.currentProgram ? p.currentProgram.name + '#' + p.currentProgram.id : null; } catch (e) { return null; } })() };
+      }
+    }
+    o.visibleMeshes = vis; o.first = first;
+    return o;
+  }
+
   /** voxel world style off: hide everything (instances stay cached for a quick switch back) */
   hide() { if (this.active) { this.root.visible = false; this.active = false; } }
 
@@ -520,6 +608,9 @@ export class VoxelUnits {
 /** is the voxel unit style on? app.mtWorldStyle (set by the world) wins, else ?world= */
 export function voxelStyle(app) {
   if (!app) return false;
+  // units-only sprite fallback (the world keeps its style): the self-test / program check failed, or ?units=sprite
+  if (app.mtVoxelUnitsOff) return false;
+  const P0 = app.params; if (P0 && P0.get && P0.get('units') === 'sprite') return false;
   if (app.mtWorldStyle) return app.mtWorldStyle === 'voxel';
-  const P = app.params; return !(P && P.get && P.get('world') === '3d');
+  const P = app.params; return !!(P && P.get && P.get('world') === 'voxel');   // 3D is the default look
 }

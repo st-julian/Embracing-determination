@@ -20,7 +20,7 @@ import { abilityFor } from './abilities.js';
 
 export const DIFFICULTY_IDS = ['easy', 'normal', 'hard'];
 export const MODE_IDS = ['quick', 'classic'];
-export const DEFAULT_OPTIONS = Object.freeze({ difficulty: 'easy', mode: 'quick' });
+export const DEFAULT_OPTIONS = Object.freeze({ difficulty: 'easy', mode: 'classic' });   // full map with every tower by default (user's call); QUICK = mid-lane-only option
 
 /** Valid options object (a NEW object); unknown / invalid values fall back to DEFAULT_OPTIONS. Never throws. */
 export function normalizeOptions(o) {

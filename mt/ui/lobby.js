@@ -901,7 +901,7 @@ export class Lobby {
       B('two' + (tm === 'coop' ? ' on' : ''), tr, 'coop', `<span>${t('room.together')}</span><small>${t('room.together.sub')}</small>`);
       B('two' + (tm === 'vs' ? ' on' : ''), tr, 'vs', `<span>${t('room.versus')}</span><small>${t('room.versus.sub')}</small>`);
       const orow = h('div', 'rm-row', ppl);
-      const dl = t('opt.difficulty') + ' ' + t('opt.difficulty.' + (opt.difficulty || 'easy')), ll = t('opt.mode') + ' ' + t('opt.mode.' + (opt.mode || 'quick'));
+      const dl = t('opt.difficulty') + ' ' + t('opt.difficulty.' + (opt.difficulty || 'easy')), ll = t('opt.mode') + ' ' + t('opt.mode.' + (opt.mode || 'classic'));
       if (host) { B('', orow, 'diff', dl + ' ▶'); B('', orow, 'len', ll + ' ▶'); } else { h('div', 'rbtn px dis', orow, dl); h('div', 'rbtn px dis', orow, ll); }
       const me = ms.find((m) => m.me) || {}, can = ms.length >= 2;
       // the host's START says why it cannot be pressed yet (no friend in the room): grey, dashed, the reason as label

@@ -15,7 +15,7 @@ function voxelOn() {
   try {
     const a = globalThis.__moba;
     if (a && a.mtWorldStyle) return a.mtWorldStyle === 'voxel';
-    return new URLSearchParams(location.search).get('world') !== '3d';
+    return new URLSearchParams(location.search).get('world') === 'voxel';   // 3D is the default look
   } catch (e) { return false; }
 }
 function load() {

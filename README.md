@@ -45,7 +45,8 @@ The original game, before the transformation, is kept in `legacy/` for compariso
 ## How to play
 
 0. **Difficulty.** Easy is the default (bots go easier on human players, and your trainer gets extra HP and a low-HP
-   rescue). QUICK mode, the default, plays only the mid lane, about 35 % faster, with a 15-minute limit.
+   rescue). The full map with every tower (CLASSIC) is the default; QUICK (Settings → match length) plays only the
+   mid lane, about 35 % faster, with a 15-minute limit.
 1. **Title → Play → Lobby.** Join with ✕ (DualSense), A (Xbox), Enter (keyboard) or by tapping. Pick a
    **team** and a **trainer specialisation**, then ready up. Every slot without a human is a bot.
 2. **Catch a second monster.** You start with your starter at Lv 3. Wear a wild monster down (your monster stops

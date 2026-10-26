@@ -3,7 +3,7 @@
 //
 //   localStorage 'sv.options' = { difficulty, mode, flow, starter, spec, look, tmode }
 //     difficulty / mode   match options handed to app.newMatch({seed, players, options}) (gameplay contract:
-//                         mt/data/options.js, DEFAULT_OPTIONS = {difficulty: 'easy', mode: 'quick'})
+//                         mt/data/options.js, DEFAULT_OPTIONS = {difficulty: 'easy', mode: 'classic'})
 //     flow                the last main-menu choice: 'solo' | 'friend' | 'local' (the menu opens on it)
 //     starter             the last chosen first monster: 'cindle' | 'puddlet' | 'sproutle' (player entry `starter`)
 //     spec / look         the trainer specialisation / outfit last used (lobby rows; solo uses them silently)
@@ -36,10 +36,13 @@ export function prefs() {
   let raw = null;
   try { raw = JSON.parse(globalThis.localStorage.getItem(STORE) || 'null'); } catch { raw = null; }
   const r = raw && typeof raw === 'object' ? raw : {};
+  // v2: CLASSIC (every tower) became the default; a mode stored before that was the old QUICK default, so it is dropped once
+  if (r.v !== 2) delete r.mode;
   cache = {
     difficulty: pick(r.difficulty, DIFFICULTIES, DEF.difficulty), mode: pick(r.mode, MODES, DEF.mode),
     flow: pick(r.flow, FLOWS, DEF.flow), starter: pick(r.starter, STARTERS, DEF.starter),
     spec: pick(r.spec, SPECS, DEF.spec), look: pick(r.look, SPECS, DEF.look), tmode: pick(r.tmode, ['coop', 'vs'], DEF.tmode),
+    v: 2,
   };
   return cache;
 }

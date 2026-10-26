@@ -23,7 +23,7 @@ import { o as heightAt, a as WATER_Y } from '../../assets/height-CVtQdZ3e.js';
 import { E as DT, D as KIND } from '../../assets/map-oE9sOnNc.js';
 import { SPECIES_ART, renderSpriteData, spritePalette } from '../../art/sprites/index.js';
 import { MT_EVENT as E } from '../sim/events.js';
-import { VoxelUnits, voxelStyle } from '../voxel/units/index.js';   // [voxel] units as animated voxel models (the default look; ?world=3d keeps sprites)
+import { VoxelUnits, voxelStyle } from '../voxel/units/index.js';   // [voxel] units as animated voxel models (?world=voxel)
 
 export const PPM = 32;                 // art pixels per world metre — shared with the world pixel grid (app.mtPixel.ppm)
 export const ART_SCALE = 1.25;         // rig rasterised at 1.25x the authored size (real extra detail, not upscaled)
