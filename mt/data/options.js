@@ -152,7 +152,10 @@ export const ASSIST = {
 export const DIFFICULTY = {
   easy: { enemyBots: 'easy', allyBots: 'ally', humanTeam: {
     quick: { hp: 1.2, dmg: 1.1, teamHp: 1.1, teamDmg: 1.05, respawn: 0.7, comeback: { bonus: 0.35, gap: 0.75 }, minionHp: 1.25, minionDmg: 1.2, structureHp: 1.3 },
-    classic: { hp: 1.35, dmg: 1.18, teamHp: 1.18, teamDmg: 1.09, respawn: 0.5, comeback: { bonus: 0.6, gap: 0.75 }, minionHp: 1.25, minionDmg: 1.2, structureHp: 1.3 } } },
+    // CLASSIC (the default mode again): was hp 1.35 / dmg 1.18 / teamHp 1.18 / minionHp 1.25 — the masher won every match
+    // but died 2.8× a match (up to 6; a third of it under enemy towers) in 12.4 min (up to 21); this: 1.8 deaths, 9.4 min
+    // (node, 32 seeds; BALANCE.md "CLASSIC default")
+    classic: { hp: 1.5, dmg: 1.3, teamHp: 1.25, teamDmg: 1.09, respawn: 0.5, comeback: { bonus: 0.6, gap: 0.75 }, minionHp: 1.5, minionDmg: 1.2, structureHp: 1.3 } } },
   normal: { enemyBots: 'normal', allyBots: 'ally', humanTeam: {
     quick: { hp: 1.05, dmg: 1, teamHp: 1, teamDmg: 1, respawn: 0.9, comeback: { bonus: 0.2, gap: 1.25 } },
     // CLASSIC: was hp 1.25 / dmg 1.12 / teamHp 1.05 / respawn 0.65 / comeback 0.5@1 — with the player assists (ASSIST.normal)

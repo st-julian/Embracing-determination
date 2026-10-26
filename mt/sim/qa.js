@@ -9,6 +9,7 @@
 //   qa.stateHash()               deterministic hash of the sim state (units, projectiles, stats) for determinism checks
 //   qa.human(trainer, opts?)     scripted "human" for one trainer slot, driven ONLY through world.command:
 //                                Capture -> Train -> Lane -> Fight -> Level up -> Evolve -> Towers -> Nexus;
+//                                follows the guide's catch cues (opening first catch, "throw now");
 //                                returns a controller whose report() lists the timestamp of every stage reached.
 //
 // Determinism: no Math.random / Date.now / performance.now here; the scripted human is a pure function of sim state.
@@ -23,6 +24,7 @@ import * as monsters from './monsters.js';
 import { hasAbility } from './combat.js';
 import { i as FOUNTAINS, a as LANES } from '../../assets/map-oE9sOnNc.js';
 import { guideFor } from './guide.js';
+import { CAPTURE_WINDOW } from '../data/options.js';
 
 const finite = Number.isFinite;
 
@@ -401,6 +403,10 @@ const STAGES = ['capture', 'train', 'lane', 'fight', 'levelUp', 'evolve', 'tower
 /**
  * Scripted human for one trainer (any slot; a bot slot is switched to bot=false). Thinks every 0.5 s in preTick and
  * only issues world.command(...) like a player would (move/attack/attackMove/stop/recall + mt commands).
+ * Catching follows the on-screen guide (guide.js) like a new player reading it: the opening's first catch (only the
+ * starter, first 2 minutes: the starter meadow / a nearby habitat) and every "throw now" cue with a worthwhile chance;
+ * a Lv 4+ monster still fills an empty bench later (time-boxed). Before the CLASSIC-default pass it ignored the guide and
+ * only hunted from Lv 4, which CLASSIC's ×1 XP reaches after the opening — 3 of 16 CLASSIC Easy seeds never caught.
  * opts: {trainLevel=2, trainUntil=200, lane=<the slot's role lane>}
  */
 function startHuman(mt, D, me, opts = {}) {
@@ -512,6 +518,8 @@ function startHuman(mt, D, me, opts = {}) {
     if (pet && pet.mtMon.evolving) return;
     // --- potion / skill
     if (pet && pet.alive && pet.hp / pet.maxHp < 0.4 && t >= T.cdEnd.potion && pet.lastHitTime > t - 3) { if (cmd({ type: 'potion' })) C.counters.potions++; }
+    // --- Catch on the guide's cue, like a new player reading the on-screen guide: "throw now", the opening's first catch
+    if (guideCatchStep(rec, pet, foes, hpF)) return;
     // --- Fight: enemy trainer/monster close and we have a healthy monster
     if (foes.length && pet && pet.alive && pet.hp / pet.maxHp > 0.3) {
       foes.sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp || a.id - b.id);
@@ -543,10 +551,40 @@ function startHuman(mt, D, me, opts = {}) {
     laneStep(pet);
   }
 
-  /** returns true while it owns the trainer this think (first capture: always) */
+  /**
+   * The guide says catch and the party has a free slot (guide.js): THROW on "throw now" (a wild monster I weakened, my
+   * monster holding its attacks on it: the capture window) when the chance is worth it, wait while my orb wobbles, and
+   * in the opening (only the starter, first 2 minutes) go and wear down the wild monster the guide points at.
+   * Returns true while it owns the trainer this think.
+   */
+  function guideCatchStep(rec, pet, foes, hpF) {
+    const T = me.mtTrainer, t = w.time;
+    if (T.party.length >= TRAINER.maxParty) return false;
+    const g = guideFor(w, me.id);
+    if (!g || g.id !== 'catch') return false;
+    if (g.wobbling) { if (foes.length) return false; if (me.order) cmd({ type: 'stop' }); return true; }
+    const tgt = g.targetId >= 0 ? w.units.get(g.targetId) : null;
+    if (!tgt || !isCapturable(tgt)) return false;
+    if (g.now) {
+      if (!(g.chance >= 0.2)) return false;           // the HUD shows a hopeless chance (a high-level wild): keep playing
+      if (dist(me.x, me.y, tgt.x, tgt.y) <= CAPTURE.range - 0.5) {
+        if (me.order && me.order.type === 'attack' && me.order.targetId === tgt.id) cmd({ type: 'stop' });   // the sling would KO it
+        if (t >= T.cdEnd.capture && cmd({ type: 'capture', targetId: tgt.id, confirm: true })) C.counters.throws++;
+        return true;
+      }
+      if (foes.length) return false;
+      moveTo(tgt.x, tgt.y, false); return true;
+    }
+    if (T.party.length === 1 && t < CAPTURE_WINDOW.openingUntil && !foes.length && pet && pet.alive && pet.hp / pet.maxHp > 0.4 && hpF > 0.5) {
+      return captureStep({ second: true, pet, target: tgt });
+    }
+    return false;
+  }
+
+  /** returns true while it owns the trainer this think (first capture: always); o2.target = this wild monster */
   function captureStep(o2 = {}) {
     const T = me.mtTrainer, t = w.time, second = !!o2.second;
-    let tgt = C.capTarget >= 0 ? w.units.get(C.capTarget) : null;
+    let tgt = o2.target || (C.capTarget >= 0 ? w.units.get(C.capTarget) : null);
     if (tgt && tgt.mtMon && tgt.mtMon.capturing) return true;            // orb wobbling
     if (!tgt || !isCapturable(tgt)) {
       tgt = null; let bs = 1e9;
@@ -569,16 +607,21 @@ function startHuman(mt, D, me, opts = {}) {
       return;
     }
     const d = dist(me.x, me.y, tgt.x, tgt.y), frac = tgt.hp / tgt.maxHp;
-    if (d <= CAPTURE.range - 0.5 && t >= T.cdEnd.capture && frac <= 0.4) {
+    // the capture window (rules.js): under holdHp my monster holds its attacks on it for a few seconds
+    const held = !!(tgt.mtHold && tgt.mtHold.by === me.id && t < tgt.mtHold.until);
+    if (d <= CAPTURE.range - 0.5 && t >= T.cdEnd.capture && (frac <= CAPTURE_WINDOW.holdHp || held)) {
       if (cmd({ type: 'capture', targetId: tgt.id, confirm: true })) { C.counters.throws++; cmd({ type: 'stop' }); if (o2.pet) cmd({ type: 'regroup' }); }
       return true;
     }
-    if (frac <= (o2.pet ? 0.45 : 0.2)) {   // weak enough: stop hitting it (the pet would kill it) and wait for the orb
+    // weak enough: stop hitting it (the pet would kill it) and wait for the orb. With a monster this is the throw
+    // threshold itself (was 0.45 vs a 0.4 throw: a wild left at 41-45 % HP was never hit again nor thrown at)
+    if (held || frac <= (o2.pet ? CAPTURE_WINDOW.holdHp : 0.2)) {
       if (me.order && me.order.type === 'attack') cmd({ type: 'stop' });
       if (o2.pet) cmd({ type: 'regroup' });
       if (d > CAPTURE.range - 1.5) moveTo(tgt.x, tgt.y, false);
       return true;
     }
+    if (!(tgt.visible && tgt.visible[team] !== false)) { moveTo(tgt.x, tgt.y, false); return true; }   // fogged camp (the guide's arrow)
     if (!me.order || me.order.type !== 'attack' || me.order.targetId !== tgt.id) cmd({ type: 'attack', targetId: tgt.id });
     if (o2.pet) cmd({ type: 'monsterAttack', targetId: tgt.id });
     return true;
