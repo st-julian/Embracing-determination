@@ -11,15 +11,16 @@
 //    (trickle training). Team-wide sources (boss, tower) go to every trainer's active monster (+ bench trickle).
 //  - Enemy owned monster: 120 × clamp(1 + 0.3 × (victimLv − recipientLv), 0.25, 2.2) — the level-gap factor is
 //    evaluated PER RECIPIENT (the monster that actually earns the XP), so an underdog that helps gets more.
-//  - Comeback: the team whose average monster level is ≥ 1.5 below the other team's gets +15 %.
+//  - Comeback: the team whose average monster level is ≥ 1.5 below the other team's gets +15 % (Easy human team:
+//    rules.comeback). QUICK mode multiplies every kill / objective XP grant by rules.xpMult (DESIGN §15).
 //  - Level cap 13 (XP stops accruing at the cap).
 //
 // Evolution (DESIGN §8)
 //  - {type:'evolve'} on a trainer: evolves the ACTIVE monster if it is ready; otherwise, if the BENCHED monster is
 //    ready, it evolves inside its orb ({type:'evolve', bench:true} forces the bench). Bots use the same command.
-//  - Active: 2.4 s channel, the monster can't act, takes 50 % damage (combat.js scaler reads mtMon.evolving),
-//    a stun/knock-up interrupts it with a full refund (nothing is consumed; press again). Recall / faint /
-//    trainer death also cancel (refund).
+//  - Active: 1.2 s channel (EVOLUTION.channel), the monster can't act; on Easy / Normal it is invulnerable and cannot be
+//    interrupted (rules.safeEvolve), on Hard it takes 50 % damage and a stun/knock-up interrupts it with a full refund
+//    (nothing is consumed; press again). Recall / faint / trainer death also cancel (refund). Done: heals 30 % max HP.
 //  - Bench: same 2.4 s channel inside the orb (safe, but the bench can't be swapped in meanwhile).
 //  - Done: the unit keeps its id; form/stats/size/moves change; HP %, level, XP and cooldowns are preserved
 //    (a newly unlocked A2 starts ready).
@@ -53,8 +54,8 @@ export function levelGapFactor(victimLv, killerLv) { return Math.min(2.2, Math.m
 /** XP for killing an enemy owned monster of level victimLv, earned by a monster of level killerLv. */
 export function enemyMonsterXp(victimLv, killerLv) { return XP.enemyMonster(victimLv, killerLv); }
 
-/** Comeback multiplier for a team: 1.15 if its avg level is ≥ 1.5 below the enemy's, else 1. */
-export function comebackMult(myAvg, enemyAvg) { return enemyAvg - myAvg >= XP.comeback.gap ? 1 + XP.comeback.bonus : 1; }
+/** Comeback multiplier for a team: 1.15 if its avg level is ≥ 1.5 below the enemy's, else 1 (cfg: Easy human team, rules.js). */
+export function comebackMult(myAvg, enemyAvg, cfg = XP.comeback) { return enemyAvg - myAvg >= cfg.gap ? 1 + cfg.bonus : 1; }
 
 /**
  * Share fractions of a kill's XP among n participants (killerIdx = index of the killer among them, or -1).
@@ -163,8 +164,9 @@ function onKill(mt, victim, killer) {
   const val = xpValue(mt, victim); if (!val) return;
   let kt = killer ? killer.team : victim.kind === KIND.MINION ? 1 - victim.team : -1;
   if (kt !== TEAM.BLUE && kt !== TEAM.RED) { if (victim.kind === KIND.MINION) kt = 1 - victim.team; else return; }
-  const cb = comebackMult(teamAvgLevel(mt, kt), teamAvgLevel(mt, 1 - kt));
-  const meta = { source: val.source, comeback: cb > 1 };
+  const cbm = comebackMult(teamAvgLevel(mt, kt), teamAvgLevel(mt, 1 - kt), mt.rules ? mt.rules.comeback(kt) : XP.comeback);
+  const meta = { source: val.source, comeback: cbm > 1 };
+  const cb = cbm * (mt.rules ? mt.rules.xpMult(kt) : 1);   // QUICK mode: XP ×1.6 (rules.js)
 
   if (val.team) {
     for (const c of w.champions) {
@@ -242,6 +244,8 @@ function beginChannel(mt, trainer, rec, u) {
     u.mtMon.evolving = ev;
     mt.L.cancelAttack(w, u, false);
     u.path = null; u.targetId = -1; u.order = null;
+    // Easy / Normal (rules.js ASSIST.safeEvolve): untouchable while evolving, so it works in the middle of a fight
+    if (mt.rules && mt.rules.safeEvolve()) { u.invulnerable = true; u.mtEvoGuard = true; ev.safe = true; }
   }
   mt.emit(mt.E.EVOLVE_START, {
     trainer: trainer.id, team: trainer.team, unit: u ? u.id : -1, ...monsters.describe(rec), to, toName: FORMS[to].name,
@@ -259,7 +263,7 @@ function stepEvolutions(mt) {
       const u = monsters.unitOf(mt, rec);
       if (!ev.bench) {
         if (!u || !u.alive) { monsters.cancelEvolution(mt, tr, rec, 'fainted'); continue; }
-        if (mt.L.isDisabled(w, u)) { monsters.cancelEvolution(mt, tr, rec, 'stunned'); continue; }
+        if (!ev.safe && mt.L.isDisabled(w, u)) { monsters.cancelEvolution(mt, tr, rec, 'stunned'); continue; }
         u.moving = false; u.state = 'idle';
       } else if (u) {
         // a benched evolution whose record got deployed (should not happen: swap is refused) -> finish on the unit
@@ -274,7 +278,7 @@ function stepEvolutions(mt) {
 function finishEvolution(mt, trainer, rec, u) {
   const from = rec.form, to = nextFormId(from);
   rec.evolving = null;
-  if (u) u.mtMon.evolving = null;
+  if (u) { u.mtMon.evolving = null; if (u.mtEvoGuard) { u.mtEvoGuard = false; u.invulnerable = false; } }
   if (!to) return;
   const f = FORMS[to];
   const hadA2 = FORMS[from].stage >= 1;
@@ -285,7 +289,8 @@ function finishEvolution(mt, trainer, rec, u) {
     M.form = to; M.line = f.line; M.stage = f.stage; M.types = f.types.slice();
     M.evolvedAt = mt.world.time; M.evolvedFrom = from;
     monsters.refreshMonsterStats(mt, u);  // preserves HP % (level unchanged)
-  }
+    u.hp = Math.min(u.maxHp, u.hp + u.maxHp * (EVOLUTION.heal || 0));   // evolving heals (playtest: it was lost to a faint)
+  } else rec.hpFrac = Math.min(1, rec.hpFrac + (EVOLUTION.heal || 0));
   mt.stats.evolutions++;
   mt.emit(mt.E.EVOLVE, {
     trainer: trainer.id, team: trainer.team, unit: u ? u.id : -1, rid: rec.rid, from, to, name: f.name, fromName: FORMS[from].name,

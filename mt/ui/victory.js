@@ -189,9 +189,10 @@ export class EndScreen {
     const medals = this.medals(w, stats), kos = [stats.score(w, view), stats.score(w, 1 - view)];
     // vertical rhythm (centred as a block on tall screens): title + subtitle | heroes on pedestals | captions |
     // medal row | buttons
-    const HERO_MAX = 170, need = 58 + HERO_MAX + 44 + (medals.length ? 30 : 0) + 30 + 12;
+    const btnH = hud.touch ? Math.max(24, Math.ceil(56 / u)) : 24;   // touch: buttons >= 56 CSS px tall
+    const HERO_MAX = 170, need = 58 + HERO_MAX + 44 + (medals.length ? 30 : 0) + btnH + 6 + 12;
     const offY = Math.max(0, Math.floor((H - st - sb - need) / 2));
-    const titleTop = 6 + st + offY, heroTop = titleTop + 60, btnY = H - sb - offY - 6 - 24;
+    const titleTop = 6 + st + offY, heroTop = titleTop + 60, btnY = H - sb - offY - 6 - btnH;
     const medalY = medals.length ? btnY - 6 - 24 : btnY, groundY = medalY - 44;   // captions (2 lines) + a gap above the medals
     const heroH = Math.max(48, Math.min(HERO_MAX, groundY - heroTop));
     // ---- backdrop: live scene (blurred + graded), light rays behind the heroes, a pool of light, vignette
@@ -244,11 +245,11 @@ export class EndScreen {
       this.el.appendChild(mrow);
     }
     // ---- buttons: Stats · Main menu · Play again
-    const again = h('div.vbtn.primary.focus', { role: 'button', 'data-play': true, html: `<span>${tr('end.again', 'Play again')}</span><span class="g"></span><i class="hit"></i>` });
-    const menu = h('div.vbtn.secondary', { role: 'button', 'data-play': true, html: `<span>${tr('end.menu', 'Main menu')}</span><span class="g"></span><i class="hit"></i>` });
-    const sbtn = h('div.vbtn.secondary.vst', { role: 'button', 'data-play': true, html: `<span>${tr('end.stats', 'Stats')}</span><span class="g"></span><i class="hit"></i>` });
+    const again = h('div.vbtn.primary.focus', { role: 'button', 'data-play': true, html: `<span>${tr('end.again', 'Play again')}</span><span class="g"></span><i class="mt-tap"></i>` });
+    const menu = h('div.vbtn.secondary', { role: 'button', 'data-play': true, html: `<span>${tr('end.menu', 'Main menu')}</span><span class="g"></span><i class="mt-tap"></i>` });
+    const sbtn = h('div.vbtn.secondary.vst', { role: 'button', 'data-play': true, html: `<span>${tr('end.stats', 'Stats')}</span><span class="g"></span><i class="mt-tap"></i>` });
     again.addEventListener('click', () => this.playAgain()); menu.addEventListener('click', () => this.mainMenu()); sbtn.addEventListener('click', () => this.toggleStats());
-    const btns = h('div.vbtns2', null, sbtn, menu, again); Object.assign(btns.style, { left: cx + 'px', top: btnY + 'px' });
+    const btns = h('div.vbtns2', null, sbtn, menu, again); Object.assign(btns.style, { left: cx + 'px', top: btnY + 'px' }); btns.style.setProperty('--vbh', btnH + 'px');
     this.el.appendChild(btns);
     this.btns = btns; this.bAgain = again; this.bMenu = menu; this.bStats = sbtn; this.order = [sbtn, menu, again];
     this.focusBtn = again; this.pressing = null; this.glyphPad = null; this.syncGlyphs();
@@ -264,7 +265,7 @@ export class EndScreen {
     const dim = h('div.vdim', { hidden: true }); dim.addEventListener('click', () => this.toggleStats(false));
     const panel = h('div.vpanel.vstatsp', { hidden: true });
     Object.assign(panel.style, { left: Math.round(cx - pw / 2) + 'px', width: pw + 'px', borderImageSource: `url(${frameURL()})` });
-    const close = h('span.vx', { role: 'button', 'aria-label': tr('common.close', 'Close'), text: '×' }, h('i.hit')); close.addEventListener('click', () => this.toggleStats(false));
+    const close = h('span.vx', { role: 'button', 'aria-label': tr('common.close', 'Close'), text: '×' }, h('i.mt-tap')); close.addEventListener('click', () => this.toggleStats(false));
     panel.appendChild(h('div.vph', null, h('span.l', { text: tr('end.summary', 'Match summary') }), h('span.r', { text: tr('end.vphR', '{time} · KOs {a}–{b}', { time: fmtTime(w.time), a: kos[0], b: kos[1] }) }), close));
     const tbl = h('div.vtbl' + (pw < 230 ? '.narrow' : ''));
     const head = [tr('end.col.trainer', 'Trainer'), tr('end.col.ko', 'KO'), tr('end.col.faint', 'Fnt'), tr('end.col.catch', 'Cap'), tr('end.col.evo', 'Evo'), tr('end.col.dmg', 'Dmg')];
@@ -287,6 +288,8 @@ export class EndScreen {
       }
     }
     panel.appendChild(tbl);
+    // what the numbers count (KO counts knocked-out monsters AND trainers; the kill feed lists trainers only)
+    panel.appendChild(h('div.vleg', { text: tr('end.legend', 'KO = monsters + trainers knocked out · Fnt = your monsters that fainted · Cap = caught') }));
     this.el.append(dim, panel); this.dim = dim; this.statsP = panel; this.statsAvH = avH; this.statsTop0 = top0;
   }
   toggleStats(on = !this.statsOpen) {

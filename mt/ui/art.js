@@ -36,6 +36,17 @@ export function pumpArt(budgetMs = 6) {
   }
 }
 
+/** 9×7 pixel chevron ▼ in a local player's colour (navy outline, light top edge): "this one is yours" — drawn over the
+ *  local active monster in the world (plates.js) and on that monster's portrait in the card. */
+export function chevron(color) {
+  return memo('chev|' + color, () => {
+    const c = document.createElement('canvas'); c.width = 9; c.height = 7; const g = c.getContext('2d');
+    const rows = ['#########', '#hhhhhhh#', '.#ccccc#.', '..#ccc#..', '...#c#...', '....#....', '.........'];
+    rows.forEach((r, y) => [...r].forEach((ch, x) => { if (ch === '.') return; g.fillStyle = ch === '#' ? '#0d1230' : ch === 'h' ? '#ffffff' : color; g.fillRect(x, y, 1, 1); }));
+    g.globalAlpha = 0.55; g.fillStyle = color; g.fillRect(2, 1, 5, 1); g.globalAlpha = 1;   // tinted highlight
+    return c;
+  });
+}
 /** Ability / trainer icon canvas (`fire/a1`, `trainer/capture`, ...). */
 export const icon = (id, size = 28) => memo('i|' + id + '|' + size, () => renderIconCanvas(id, size));
 /** Type badge pill canvas. */

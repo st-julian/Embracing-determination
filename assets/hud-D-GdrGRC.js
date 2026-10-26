@@ -56,6 +56,8 @@ import {
   yt as j,
 } from "./index-DHK-Ptzs.js";
 import { t as ne } from "./palette-L_rDAXd8.js";
+import * as __mtLT from "../mt/render/loadtime.js"; // [MT-HOOK] loadtime import (mt/render/loadtime.js: art encode worker, warm-up / prebake / loading pace)
+const __mtLoadUI = () => !__mtLT.LEGACY && !/[?&]legacyloading=1(&|$)/.test((globalThis.location && location.search) || ""); // [MT-HOOK] mtLoading: mt/ui/loading.js shows the loading screen; the legacy one runs hidden and bakes no art (?legacyloading=1 restores it)
 var M = (e, t, n) => (e < t ? t : e > n ? n : e);
 function N(e, t, ...n) {
   let r = e.split(`.`),
@@ -860,6 +862,7 @@ function wt(e, t, n) {
 var Tt = new Map();
 function Et(e, t = !1) {
   let n = t ? `image/png` : `image/jpeg`;
+  { let m = __mtLT.artEncode(e, n, 0.92); if (m) return m; } // [MT-HOOK] artEncode: encode off the main thread (worker), legacy toBlob = fallback
   return new Promise((t) => {
     try {
       e.toBlob(
@@ -4261,7 +4264,8 @@ var Gn = 0,
           (this.mkT = 0),
           Q.canvas
             ? this.blit()
-            : (Q.draft && this.blitFrom(Q.draft, !1),
+            : __mtLT.LEGACY && // [MT-HOOK] hudMinimap: mt hides the legacy minimap (mt/ui/minimap.js draws its own): no terrain bake for it
+              (Q.draft && this.blitFrom(Q.draft, !1),
               this.hud.job(() => this.paintDraft(), null, 0),
               this.hud.job(() => this.paintFinal(), null, 1)));
       }
@@ -8040,7 +8044,7 @@ var br = {
         r = n.portraits,
         i = [],
         [a, o] = n.splashDims(`loading`);
-      r.pumpAll(240);
+      __mtLoadUI() || r.pumpAll(240); // [MT-HOOK] mtLoading
       let s = (s) =>
           N(
             `div.ld-team.${s === e.viewerTeam ? `ally` : `enemy`}`,
@@ -8063,14 +8067,14 @@ var br = {
                     art: !1,
                   },
                   h = N(`div.ld-art`);
-                (it(s.champion), (m.art$ = h), (m.champ = s.champion));
-                let g = r.cardSync(s.champion, a, o);
+                (__mtLoadUI() ? (m.art = !0) : it(s.champion), (m.art$ = h), (m.champ = s.champion)); // [MT-HOOK] mtLoading: no 3D hero render, art counts as ready
+                let g = __mtLoadUI() ? null : r.cardSync(s.champion, a, o); // [MT-HOOK] mtLoading
                 (g &&
                   ((g.className = `ld-artcv`),
                   h.append(g),
                   (m.quick = g),
                   (m.art = !0)),
-                  n.bg(h, () => r.splashArt(s.champion, a, o), {
+                  __mtLoadUI() || n.bg(h, () => r.splashArt(s.champion, a, o), { // [MT-HOOK] mtLoading: no splash bake
                     fb: xn(s.champion, 0.63),
                     done: () => {
                       ((m.art = !0), (m.quick &&= (m.quick.remove(), null)));
@@ -8094,7 +8098,7 @@ var br = {
                       N(
                         `span.ld-spells`,
                         null,
-                        ...(l ? l.spells : []).map((e) =>
+                        ...(l && !__mtLoadUI() ? l.spells : []).map((e) => // [MT-HOOK] mtLoading: no spell icons
                           n.bgEl(
                             N(`span.ld-spell`, { title: he(e.id) }),
                             () => Xt(e.id, 64),
@@ -8118,7 +8122,7 @@ var br = {
         p = N(
           `div.sv-screen.sv-loading`,
           null,
-          n.bgEl(N(`div.ld-bg`), () => sn()),
+          __mtLoadUI() ? N(`div.ld-bg`) : n.bgEl(N(`div.ld-bg`), () => sn()), // [MT-HOOK] mtLoading: no vale background bake
           N(`div.ld-shade`),
           N(
             `header.ld-head`,
@@ -8170,7 +8174,7 @@ var br = {
       return (
         (this.tick = (e) => {
           h += Math.max(0, e.dt);
-          let t = g ? jr * 0.62 : h,
+          let t = g ? jr * 0.62 : h * __mtLT.LOAD_PACE, // [MT-HOOK] loadPace (fake progress fills at the pace of the shorter minimum)
             r = 0,
             a = !0;
           for (let e of i) {
@@ -8186,7 +8190,7 @@ var br = {
           (d((o / 100).toFixed(2)),
             f(o + `%`),
             !g &&
-              h >= 4.55 &&
+              h >= __mtLT.LOAD_MIN && // [MT-HOOK] loadMin (legacy 4.55 s; ?loadmin=4.55)
               ((a && n.q[0].length === 0) || h >= 7.2) &&
               !(globalThis.__moba && globalThis.__moba.mtPrewarm && globalThis.__moba.mtPrewarm.holdLoading(h)) && // [MT-HOOK] prewarmHold (wait for shader prewarm, capped)
               this.go(`game`));
@@ -8872,22 +8876,25 @@ var zr = 3e3,
       }
     }
     queueWarmup() {
+      if (__mtLoadUI()) return; // [MT-HOOK] mtLoading: no select / loading splash, vale background or spell icons (only the hidden legacy screens used them)
       let e = this.portraits,
         t = (e) => this.enqueue({ fn: e }, 3);
       t(() => sn());
       let [r, i] = this.splashDims(`select`),
         [a, o] = this.splashDims(`loading`);
-      for (let a of n) t(() => (it(a), e.splashArt(a, r, i)));
-      for (let r of n) t(() => e.urlArt(r, this.porPx()));
-      for (let e of n) {
+      for (let a of __mtLT.hudLegacyChamps(n)) t(() => (it(a), e.splashArt(a, r, i))); // [MT-HOOK] hudWarmup (mt: no legacy select splash)
+      for (let r of __mtLT.hudLegacyChamps(n)) t(() => e.urlArt(r, this.porPx())); // [MT-HOOK] hudWarmup (mt: no legacy portraits)
+      for (let e of __mtLT.hudLegacyChamps(n)) { // [MT-HOOK] hudWarmup (mt: no legacy ability icons)
         let n = x[e];
         for (let e of n.abilities) t(() => Ut(e, n.attackElement, 128));
       }
-      for (let r of n) t(() => e.splashArt(r, a, o));
+      for (let r of __mtLT.hudLoadingChamps(n, this.app)) (__mtLT.LEGACY || it(r), t(() => e.splashArt(r, a, o))); // [MT-HOOK] hudWarmup (mt: the trainers' loading-screen splash; its 3D hero render starts now, during boot)
       for (let e of [`flash`, `heal`, `smite`, `ignite`]) t(() => Xt(e, 64));
     }
     queuePrebake(e) {
       if (!e) return;
+      if (__mtLoadUI()) return; // [MT-HOOK] mtLoading: no loading-card portraits (and nothing else: the rest is art of hidden legacy panels)
+      if (__mtLT.hudPrebake(this, e)) return; // [MT-HOOK] hudPrebake (mt: portraits only, the other prebaked art is for hidden legacy panels)
       let t = e.units && e.units.get(this.app.playerId),
         n = this.portraits,
         r = this.artScale(),
@@ -9000,7 +9007,7 @@ var zr = 3e3,
         e !== `game` && (this.game.closeMenu(), this.minimap.reset()),
         e === `menu` || e === `select` || e === `loading`)
       )
-        for (let e of n) it(e);
+        for (let e of __mtLT.hudLegacyChamps(n)) it(e); // [MT-HOOK] hudWarmup (mt: no 3D hero renders of the 5 legacy champions on menu / loading; the loading cards request their own)
       (e !== `game` &&
         this.app.ui.panel !== `none` &&
         this.app.fire(`ui`, { panel: `none` }),

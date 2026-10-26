@@ -61,6 +61,7 @@ import {
   u as ve,
 } from "./height-CVtQdZ3e.js";
 import { n as ye } from "./BufferGeometryUtils-ZZwUU_DG.js";
+import { flagCheck as __mtFlagCheck } from "../mt/render/loadtime.js"; // [MT-HOOK] flagCheck import (mt/render/loadtime.js)
 var be = 12.75,
   xe = 12.75,
   Se = 25.5,
@@ -165,19 +166,24 @@ var ENV_INST_CUT = `
 // FOREGROUND CUT, per INSTANCE (env r4b): a prop is faded as a WHOLE object when its vertical axis (root, middle, top,
 // the top widened by a crown allowance) passes through the capsule around the camera->unit ray above the unit's ground.
 // (r5: kept generous on purpose — a whole prop leaving the frame reads as nothing, a prop over a unit reads as a bug.)
+// (r6, iPad "glitchy while playing": it was a binary pop) the value is now CONTINUOUS — a ~1.2 m soft band around the
+// capsule, times the unit's eased weight uOccK — and the fragment turns it into an alpha / ordered-dither fade, so a
+// prop dissolves over ~0.3 s of walking instead of vanishing between two frames.
+uniform float uOccK[10];
 float envInstCut(vec2 rt, float g0, float hI, float rI) {
   float c = 0.0;
   for (int i = 0; i < 10; i++) {
-    vec4 o = uOcc[i]; if (o.w <= 0.0) continue;
+    vec4 o = uOcc[i]; float k = uOccK[i]; if (o.w <= 0.0 || k <= 0.0) continue;
     float gy = o.y - 1.15; vec3 tgt = vec3(o.x, gy + 0.9, o.z); vec3 seg = tgt - uCamPos; float sl = dot(seg, seg);
     float R = 1.1 + o.w * 0.2;
-    for (int k = 0; k < 3; k++) {
-      float y = g0 + (k == 0 ? 0.3 : k == 1 ? hI * 0.5 : hI);
-      if (y < gy + 0.45) continue;
+    for (int j = 0; j < 3; j++) {
+      float y = g0 + (j == 0 ? 0.3 : j == 1 ? hI * 0.5 : hI);
+      float above = smoothstep(gy + 0.25, gy + 0.65, y);
+      if (above <= 0.0) continue;
       vec3 W = vec3(rt.x, y, rt.y);
-      float t = dot(W - uCamPos, seg) / sl; if (t < 0.0 || t > 0.985) continue;
+      float t = dot(W - uCamPos, seg) / sl; if (t < 0.0) continue;
       float Rk = R + rI * 0.8 + 0.2;   // the prop's own horizontal extent
-      c = max(c, 1.0 - smoothstep(Rk * 0.85, Rk, length(W - (uCamPos + seg * t))));
+      c = max(c, k * above * (1.0 - smoothstep(0.94, 0.995, t)) * (1.0 - smoothstep(Rk - 1.0, Rk + 0.25, length(W - (uCamPos + seg * t)))));
     }
   }
   return c;
@@ -188,6 +194,12 @@ var ENV_TRAILS = (() => {
   let t = [[24,44,12,44],[24,44,40,56],[40,56,48,48],[40,56,26,64],[26,64,12,70],[26,64,34,86],[40,56,46,74],[24,44,30,30],[56,88,40,80],[56,88,64,80],[64,80,72,72],[64,80,52,68],[56,88,76,96],[76,96,76,108],[76,96,86,86],[56,88,48,108],[26,64,18,80]];
   return [...t, ...t.map(([a, b, c, d]) => [b, a, d, c])];
 })();
+function envLocal(id) {
+  let a = globalThis.__moba;
+  if (!a || id == null || id < 0) return !1;
+  if (a.locals && a.locals.length) { for (let l of a.locals) if (l.unitId === id) return !0; return !1; }
+  return a.playerId === id;
+}
 function envSightHidden(cx, cy, cz, x, z, g, H) {
   let dx = cx - x, dz = cz - z, hd = Math.hypot(dx, dz);
   if (hd < 0.5) return 0;
@@ -1188,7 +1200,7 @@ function nt(e, t) {
     i.dispose(),
     r.dispose());
   let d = new Uint8Array(64);
-  e.readRenderTargetPixels(n, 100, 100, 4, 4, d);
+  __mtFlagCheck(e, n, d, () => rt(t.image.data)) || e.readRenderTargetPixels(n, 100, 100, 4, 4, d); // [MT-HOOK] flagCheck: the GPU flagstone bake is validated asynchronously (no GPU sync at boot); an empty result gets the CPU bake copied in
   let f = 0;
   for (let e = 0; e < 16; e++) f += d[e * 4] + d[e * 4 + 2];
   if (!f) return (n.dispose(), null);
@@ -3962,10 +3974,13 @@ void waterShade(out vec3 col, out float alpha, inout vec3 nW, inout vec3 emis) {
   if (PIX_ON > 0.5) lines = step(0.42, lines) * 0.9;
   // wading ripples around units in the water
   vec2 gw = vec2(0.0);
-  float ringFoam = 0.0;
+  float ringFoam = 0.0, unitPool = 0.0;
   for (int i = 0; i < 12; i++) {
     vec4 r = uRipple[i]; if (r.z <= 0.0) continue;
     vec2 dv = p - r.xy; float d = length(dv); if (d > 3.2) continue;
+    // (env r6, iPad playtest #9) FIGURE-GROUND in river fights: a calm, darker pool under every wading unit (the body's
+    // own shadow in the water), so a blue unit never stands on bright blue glitter and its foam ring reads on it
+    unitPool = max(unitPool, (1.0 - smoothstep(0.35, 1.3, d)) * clamp(r.z / 0.45, 0.0, 1.0));
     float wave = sin(d * 10.0 - uTime * 5.5 + r.w) * exp(-d * 1.25) * r.z;
     gw += dv / max(d, 0.05) * wave * 0.6;
     ringFoam = max(ringFoam, smoothstep(0.55, 0.95, wave) * smoothstep(0.35, 0.9, d) * 0.9);
@@ -3973,6 +3988,7 @@ void waterShade(out vec3 col, out float alpha, inout vec3 nW, inout vec3 emis) {
     // minion's width under every wading unit; creeps draw their own waterline ring)
     ringFoam = max(ringFoam, (1.0 - smoothstep(0.28, 0.52, d)) * 0.34 * r.z);
   }
+  lines *= 1.0 - 0.8 * unitPool;
   // broad, gentle surface undulation (≥ 2 u features) from low-frequency noise
   float u0 = tNoise(p + dir * uTime * 0.25, 0.09, vec2(0.13)).r;
   float ux = tNoise(p + dir * uTime * 0.25 + vec2(0.4, 0.0), 0.09, vec2(0.13)).r, uz = tNoise(p + dir * uTime * 0.25 + vec2(0.0, 0.4), 0.09, vec2(0.13)).r;
@@ -3991,6 +4007,7 @@ void waterShade(out vec3 col, out float alpha, inout vec3 nW, inout vec3 emis) {
   col = mix(col, deep, smoothstep(0.5, 1.0, od));
   col *= 0.92 + 0.16 * tNoise(p, 0.05, vec2(0.61)).g;
   alpha = mix(0.22, 0.88, smoothstep(0.0, 0.75, od));
+  col = mix(col, deep * 0.62, unitPool * 0.55); alpha = max(alpha, mix(alpha, 0.82, unitPool));
   // NO COPLANAR SHEET (round-4 c2 major): water thinner than ≈0.06 u is not a body of water the eye can see, it is a
   // wet film — the terrain's damp-sand / wet-dark bands carry that look. The body's own alpha therefore ramps in over
   // the first 0.07 u of depth; only foam (added below) may reach the very edge.
@@ -4115,7 +4132,7 @@ void waterShade(out vec3 col, out float alpha, inout vec3 nW, inout vec3 emis) {
     { vec2 fa = tNoise(p + dir * uTime * 0.45, 1.25, vec2(0.21)).rg, fb = tNoise(p - perp * uTime * 0.30, 1.70, vec2(0.66)).gr;
       vec3 gN = normalize(vec3((fa.x + fb.x - 1.0) * 0.50 - gw.x * 0.5, 1.0, (fa.y + fb.y - 1.0) * 0.50 - gw.y * 0.5));
       float g = pow(max(dot(reflect(-V, gN), normalize(uSunDirW)), 0.0), 220.0);
-      emis += vec3(1.0, 0.97, 0.88) * g * 2.2 * smoothstep(0.03, 0.45, lobe) * lodFade(0.22, pw) * (1.0 - clamp(foam, 0.0, 1.0)) * smoothstep(0.04, 0.25, depth) * cloudShadow(p); }
+      emis += vec3(1.0, 0.97, 0.88) * g * 2.2 * smoothstep(0.03, 0.45, lobe) * lodFade(0.22, pw) * (1.0 - clamp(foam, 0.0, 1.0)) * smoothstep(0.04, 0.25, depth) * cloudShadow(p) * (1.0 - unitPool); }
     // BANK REFLECTION without a planar pass (round 4 minor: "cliffs, sand and champions rise out of the river with no
     // mirror image"). The reflected ray's ground track is marched four fixed steps against the baked height field; the
     // first step where the terrain stands above the ray is a bank, and the water carries a band of that bank's tone
@@ -4351,7 +4368,7 @@ diffuseColor.rgb = wCol; diffuseColor.a = wAlpha;`,
           )
           .replace(`#include <lights_fragment_end>`, st)));
   }),
-    (u.customProgramCacheKey = () => `world-water-v10`));
+    (u.customProgramCacheKey = () => `world-water-v11`));
   let f = new F(i, u);
   ((f.name = `river-water`),
     (f.receiveShadow = !1),
@@ -8439,6 +8456,8 @@ uniform vec3 uCamPos;
 ${Be}
 
 ${ENV_INST_CUT}
+attribute float aCutI;
+uniform sampler2D uCutTex;
 #ifdef CARDS
 attribute vec2 aUV;
 varying vec2 vCardUV;
@@ -8465,8 +8484,8 @@ vCardUV = aUV;
   vWNor = normalize(mat3(modelMatrix) * objectNormal);
   vFade = 0.0;
   vRootG = fHeight(texture2D(uFieldA, fieldUV(vec2(aRoot.x, aRoot.y) / 64.0)));
-  { vec2 rtI = aRoot.xy / 64.0; float hI = aRoot.z / 64.0;
-    if (hI > 0.6) vFade = max(vFade, envInstCut(rtI, fHeight(texture2D(uFieldA, fieldUV(rtI))), hI, aRoot.w / 64.0)); }
+  // (env r6) whole-object fade, eased per placement on the CPU (0.25 s, hysteresis) — never a pop between two frames
+  { int cI = int(aCutI + 0.5); vFade = max(vFade, texelFetch(uCutTex, ivec2(cI % 256, cI / 256), 0).r); }
   if (fadeable > 0.5 && PIX_ON > 0.5) {
     float above = vWPos.y - fHeight(texture2D(uFieldA, fieldUV(vWPos.xz)));
     if (above > 0.9) {
@@ -8505,6 +8524,7 @@ float gPropTag = 1.0;
 varying float vRootG;
 uniform vec4 uOcc[10];
 uniform vec3 uCamPos;
+uniform float uA2C;
 
 ${gt}
 uniform float uDebug;
@@ -8593,8 +8613,10 @@ void propShade(inout vec3 col, inout float rough, inout float metal, inout vec3 
   float dfw = fwidth(dn) + 0.01;
   float th = vFade * 1.02 - 0.12;
   // whole-object fade (the value is constant per instance): a short ordered-dither fade, never per-pixel slices
-  float vFd = min(vFade, 1.0);
-  alpha *= step(vFd, 0.5);   // binary per object: no half-dithered trees in a still frame
+  // (env r6) smooth whole-object fade: alpha-to-coverage where the scene target has MSAA, an ordered dither elsewhere
+  float vFd = clamp(vFade, 0.0, 1.0);
+  if (uA2C > 0.5) alpha *= 1.0 - vFd;
+  else if (bayer4(gl_FragCoord.xy) < vFd * 1.04 - 0.02) alpha = 0.0;
 #ifdef CARDS
   { vec4 T = texture2D(uAtlas, vCardUV);
     // Analytic 1-pixel cutout instead of a 1.5x-fwidth ramp. alpha-to-coverage turns a fractional alpha into a sample
@@ -9279,6 +9301,9 @@ function gr(e, t, n) {
           uFieldA: e.uFieldA,
           uFieldB: e.uFieldB,
           uOcc: e.uOcc,
+          uOccK: e.uOccK,
+          uA2C: e.uA2C,
+          uCutTex: e.uCutTex,
           uCamPos: e.uCamPos,
           uAtlas: e.uAtlas,
           uDebug: e.uDebug,
@@ -9346,7 +9371,7 @@ if (PIX_ON > 0.5) gl_FragColor.a = gPropTag;`,
             )));
     }),
     (r.customProgramCacheKey = () =>
-      `world-props-v9-${t}-${n ? `cards` : `solid`}`),
+      `world-props-v11-${t}-${n ? `cards` : `solid`}`),
     r
   );
 }
@@ -10966,6 +10991,21 @@ function Dr(e, t, r = null) {
 }
 var Or = [`solidCast`, `solid`, `cards`, `smallSolid`, `smallCards`];
 function kr(e, t, n) {
+  // (env r6) every placement gets an index into the prop-fade texture (WorldArt._updatePropFade eases one value per
+  // placement on the CPU), and one cut extent: the max over its parts (solid + crown cards)
+  let cutL = [];
+  for (let t of e) {
+    if (t._cutR === void 0) {
+      let H = 0, R = 0;
+      for (let q of [t.tpl && t.tpl.vcount ? t.tpl : null, t.tpl && t.tpl.cards]) {
+        if (!q || !q.vcount) continue;
+        if (q._hr === void 0) { let mr = 0; for (let k = 0; k < q.vcount; k++) mr = Math.max(mr, Math.hypot(q.pos[k * 3], q.pos[k * 3 + 2])); q._hr = mr; }
+        ((H = Math.max(H, (q.maxY || 2) * t.sy)), (R = Math.max(R, q._hr * Math.max(t.sx, t.sz))));
+      }
+      ((t._cutH = H), (t._cutR = R));
+    }
+    ((t._ci = cutL.length), cutL.push(t));
+  }
   let r = new Map(),
     i = (e, t, n, i) => {
       let a = r.get(e);
@@ -11004,6 +11044,7 @@ function kr(e, t, n) {
       _ = new Uint8Array(i * 3),
       v = new Uint8Array(i * 4),
       rt = new Int16Array(i * 4),
+      ci = new Float32Array(i),
       y = r ? new Float32Array(i * 2) : null,
       b = i > 65535 ? new Uint32Array(a) : new Uint16Array(a),
       x = 0,
@@ -11053,7 +11094,7 @@ function kr(e, t, n) {
           }
           ((t._cutH = H), (t._cutR = R));
         }
-        ((rt[(x + d) * 4] = Math.round(t.x * 64)), (rt[(x + d) * 4 + 1] = Math.round(t.z * 64)), (rt[(x + d) * 4 + 2] = Math.round(Math.min(500, t._cutH) * 64)), (rt[(x + d) * 4 + 3] = Math.round(Math.min(500, t._cutR) * 64)));
+        ((rt[(x + d) * 4] = Math.round(t.x * 64)), (rt[(x + d) * 4 + 1] = Math.round(t.z * 64)), (rt[(x + d) * 4 + 2] = Math.round(Math.min(500, t._cutH) * 64)), (rt[(x + d) * 4 + 3] = Math.round(Math.min(500, t._cutR) * 64)), (ci[x + d] = t._ci));
         ((v[j] = e.info[d * 4]),
           (v[j + 1] = e.info[d * 4 + 1]),
           (v[j + 2] = s),
@@ -11080,6 +11121,7 @@ function kr(e, t, n) {
       D.setAttribute(`color`, new O(_, 3, !0)),
       D.setAttribute(`aInfo`, new O(v, 4, !0)),
       D.setAttribute(`aRoot`, new O(rt, 4, !1)),
+      D.setAttribute(`aCutI`, new O(ci, 1)),
       y && D.setAttribute(`aUV`, new O(y, 2)),
       D.setIndex(new O(b, 1)),
       D.computeBoundingSphere(),
@@ -11121,6 +11163,7 @@ function kr(e, t, n) {
     group: c,
     glows: t,
     meshes: p,
+    cut: cutL,
     stats: {
       instances: e.length,
       meshes: p.length,
@@ -11633,6 +11676,8 @@ var Nr = class {
     }),
       (this.occluders = Array.from({ length: 10 }, () => new N(0, 0, 0, 0))),
       (this.cutK = new Float32Array(10)),
+      (this.occK = new Float32Array(10)),
+      (this._ripIds = new Int32Array(12)),
       (this._occIds = new Int32Array(10)),
       (this._occH = new Float32Array(10)),
       (this._cutState = new Map()),
@@ -11656,6 +11701,9 @@ var Nr = class {
         uCamPos: r.uCameraPos || { value: new P(60, 30, 80) },
         uOcc: { value: this.occluders },
         uCutK: { value: this.cutK },
+        uOccK: { value: this.occK },
+        uA2C: { value: 0 },
+        uCutTex: { value: null },
       }),
       mt(this.shared, e.renderer),
       (this.group.userData.cc0On = this.shared.uCc0On));
@@ -11667,6 +11715,7 @@ var Nr = class {
       this.group.add(habPonds(this.shared)));
     let d = qn();
     ((this.props = Dr(this.shared, d)),
+      this._initPropFade(),
       this.group.add(this.props.group),
       this._installCutDepth(e),
       (this.brush = Ar(this.shared)),
@@ -11718,6 +11767,132 @@ var Nr = class {
   // (env r5) how much of each key unit is really hidden by the terrain, from the camera: 7 samples up its body, each
   // marched towards the camera over the height field. The terrain cut opens at >= 3/7 hidden and closes at <= 1/7,
   // eased per unit id (~0.12 s), so a unit that merely stands NEAR a plateau never gets a hole cut beside it.
+  // (env r6, iPad "the whole map is glitchy") the units the foreground cut follows are EASED in and out per unit id
+  // (0.25 s in, 0.3 s out) instead of entering / leaving the 10 slots between two frames: a monster crossing the 9 m
+  // "near the player" line, or a slot reshuffle, used to pop every tree on its sight line in or out at once. A unit
+  // that stops being wanted keeps its slot (tracked at its live position) until its weight has faded to zero.
+  _easeOcc(h, dt, world) {
+    let f = this.occluders, st = (this._occSt ||= new Map()), K = this.occK, ids = this._occIds, H = this._occH;
+    for (let v of st.values()) v.on = 0;
+    for (let j = 0; j < h; j++) {
+      let id = ids[j], o = f[j], v = st.get(id);
+      v || st.set(id, (v = { k: 0, x: o.x, z: o.z }));
+      // a jump (respawn, recall, blink) restarts the fade at the new place instead of dragging the old one along
+      Math.abs(v.x - o.x) + Math.abs(v.z - o.z) > 4 && (v.k = 0);
+      ((v.on = 1), (v.x = o.x), (v.y = o.y), (v.z = o.z), (v.w = o.w), (v.H = H[j]), (v.dy = o.y - I(o.x, o.z)));
+    }
+    let list = (this._occList ||= []);
+    list.length = 0;
+    for (let [id, v] of st) {
+      if (!v.on) {
+        let u = world && world.units ? world.units.get(id) : null;
+        if (u && u.alive) ((v.x = u.x), (v.z = u.y), (v.y = I(u.x, u.y) + (v.dy ?? 1.15)));
+      }
+      v.k = Math.max(0, Math.min(1, v.k + (v.on ? dt / 0.25 : -dt / 0.3)));
+      dt <= 0 && (v.k = v.on);
+      if (!v.on && v.k <= 0) { st.delete(id); continue; }
+      list.push([id, v]);
+    }
+    list.sort((a, b) => b[1].on - a[1].on || b[1].k - a[1].k);
+    let n = Math.min(10, list.length);
+    for (let j = 0; j < n; j++) {
+      let [id, v] = list[j];
+      (f[j].set(v.x, v.y, v.z, v.w), (K[j] = v.k), (ids[j] = id), (H[j] = v.H || 1.5));
+    }
+    return n;
+  }
+  // (env r6) wading ripples / the dark pool under a unit: 12 slots shared by every wading unit in view, so in a big
+  // river fight units won and lost a slot between frames (pools and rings popping). Each unit's ripple now eases in
+  // over 0.2 s and out over 0.3 s, and a unit keeps its slot while it is fading.
+  _easeRipples(m, dt) {
+    let d = this.water.ripples, st = (this._ripSt ||= new Map()), ids = this._ripIds;
+    for (let v of st.values()) v.on = 0;
+    for (let j = 0; j < m; j++) {
+      let v = st.get(ids[j]);
+      v || st.set(ids[j], (v = { k: 0 }));
+      ((v.on = 1), (v.x = d[j].x), (v.y = d[j].y), (v.z = d[j].z), (v.w = d[j].w));
+    }
+    let L = (this._ripL ||= []);
+    L.length = 0;
+    for (let [id, v] of st) {
+      v.k = Math.max(0, Math.min(1, v.k + (v.on ? dt / 0.2 : -dt / 0.3)));
+      dt <= 0 && (v.k = v.on);
+      if (!v.on && v.k <= 0) { st.delete(id); continue; }
+      L.push(v);
+    }
+    L.sort((a, b) => b.on - a.on || b.k - a.k);
+    let n = Math.min(12, L.length);
+    for (let j = 0; j < n; j++) d[j].set(L[j].x, L[j].y, L[j].z * L[j].k, L[j].w);
+    return n;
+  }
+  // (env r6) per-placement foreground fade. The geometric test (a placement's axis — root, middle, top — inside the
+  // capsule around the camera -> unit sight line, above the unit's ground) gives a TARGET with a +-0.35 m hysteresis
+  // band; the value eases to it over 0.25 s and is read by the prop shaders (and their shadow) from a small texture. So
+  // a tree fades out and back in over a quarter second instead of popping, and never sits half-dithered.
+  _initPropFade() {
+    let L = (this.props && this.props.cut) || [], W = 256, Hh = Math.max(1, Math.ceil(L.length / W));
+    let tex = new T(new Uint8Array(W * Hh * 4), W, Hh, g, S);
+    ((tex.magFilter = tex.minFilter = ie), (tex.generateMipmaps = !1), (tex.colorSpace = ``), (tex.needsUpdate = !0));
+    this.shared.uCutTex.value = tex;
+    this._pfV = new Float32Array(L.length);
+    this._pfT = new Uint8Array(L.length);
+    this._pfOn = new Set();
+    let cells = (this._pfCells = new Map());
+    L.forEach((t, i) => {
+      if (!(t._cutH > 0.6)) return;
+      let k = Math.floor((t.x + 20) / 8) * 64 + Math.floor((t.z + 20) / 8), c = cells.get(k);
+      c ? c.push(i) : cells.set(k, [i]);
+    });
+  }
+  _updatePropFade(h, dt, fx, fz) {
+    let L = this.props && this.props.cut, tex = this.shared.uCutTex.value, cam = this.ctx.camera;
+    if (!L || !tex || !cam) return;
+    let V = this._pfV, Tg = this._pfT, on = this._pfOn, data = tex.image.data, f = this.occluders, K = this.occK, cp = cam.position;
+    let occ = (this._pfOcc ||= []);
+    occ.length = 0;
+    for (let j = 0; j < h; j++) {
+      if (K[j] < 0.5 || f[j].w <= 0) continue;
+      let o = f[j], gy = o.y - 1.15, sx = o.x - cp.x, sy = gy + 0.9 - cp.y, sz = o.z - cp.z;
+      occ.push([gy, sx, sy, sz, sx * sx + sy * sy + sz * sz, 1.1 + o.w * 0.2, o.x, o.z]);
+    }
+    let cand = (this._pfCand ||= new Set());
+    cand.clear();
+    for (let i of on) cand.add(i);
+    // candidates: placements in the cells around each sight line (unit -> camera ground track, +-7 m), plus every
+    // placement still fading
+    for (let q of occ) {
+      let x0 = Math.min(q[6], cp.x) - 7, x1 = Math.max(q[6], cp.x) + 7, z0 = Math.min(q[7], cp.z) - 7, z1 = Math.max(q[7], cp.z) + 7;
+      for (let cx = Math.floor((x0 + 20) / 8); cx <= Math.floor((x1 + 20) / 8); cx++)
+        for (let cz = Math.floor((z0 + 20) / 8); cz <= Math.floor((z1 + 20) / 8); cz++) {
+          let c = this._pfCells.get(cx * 64 + cz);
+          if (c) for (let i of c) cand.add(i);
+        }
+    }
+    let dirty = !1, step = Math.min(dt, 0.1) / 0.25;
+    for (let i of cand) {
+      let t = L[i], hI = t._cutH, rI = t._cutR, g0 = t.y, inside = !1, near = !1;
+      for (let q of occ) {
+        let [gy, sx, sy, sz, sl, R] = q, Rk = R + rI * 0.8 + 0.2;
+        if (Math.abs(t.x - q[6]) > Rk + 30 || Math.abs(t.z - q[7]) > Rk + 30) continue;
+        for (let k = 0; k < 3; k++) {
+          let y = g0 + (k === 0 ? 0.3 : k === 1 ? hI * 0.5 : hI);
+          if (y < gy + 0.45) continue;
+          let wx = t.x - cp.x, wy = y - cp.y, wz = t.z - cp.z, tt = (wx * sx + wy * sy + wz * sz) / sl;
+          if (tt < 0 || tt > 0.985) continue;
+          let dx = wx - sx * tt, dy = wy - sy * tt, dz = wz - sz * tt, d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          d < Rk - 0.35 ? (inside = !0) : d < Rk + 0.35 && (near = !0);
+        }
+        if (inside) break;
+      }
+      let tg = inside ? 1 : near ? Tg[i] : 0;
+      Tg[i] = tg;
+      let v = Math.max(0, Math.min(1, V[i] + (tg ? step : -step)));
+      dt <= 0 && (v = tg);
+      if (v !== V[i]) { ((V[i] = v), (data[i * 4] = Math.round(v * 255)), (dirty = !0)); }
+      v > 0 || tg ? on.add(i) : on.delete(i);
+    }
+    dirty && (tex.needsUpdate = !0);
+  }
   _updateCut(h, dt) {
     let cam = this.ctx.camera, K = this.cutK, st = this._cutState, seen = this._cutSeen || (this._cutSeen = new Set());
     seen.clear();
@@ -11745,7 +11920,7 @@ var Nr = class {
       let vp = (this._cutVP = { value: new T3.Matrix4() }), fa = this.shared.uFieldA,
         dm = new T3.MeshDepthMaterial();
       ((dm.onBeforeCompile = (sh) => {
-        ((sh.uniforms.uFieldA = fa), (sh.uniforms.uMainVP = vp), (sh.uniforms.uOcc = this.shared.uOcc), (sh.uniforms.uCamPos = this.shared.uCamPos),
+        ((sh.uniforms.uFieldA = fa), (sh.uniforms.uMainVP = vp), (sh.uniforms.uOcc = this.shared.uOcc), (sh.uniforms.uOccK = this.shared.uOccK), (sh.uniforms.uCutTex = this.shared.uCutTex), (sh.uniforms.uCamPos = this.shared.uCamPos),
           (sh.vertexShader =
             `attribute vec4 aInfo;
 attribute vec4 aRoot;
@@ -11753,6 +11928,9 @@ uniform mat4 uMainVP;
 uniform sampler2D uFieldA;
 uniform vec4 uOcc[10];
 uniform vec3 uCamPos;
+varying float vCutF;
+attribute float aCutI;
+uniform sampler2D uCutTex;
 vec2 cutFieldUV(vec2 p) { return (p - vec2(-20.0)) / 160.0; }
 ` + ENV_INST_CUT +
             sh.vertexShader.replace(
@@ -11763,10 +11941,18 @@ vec2 cutFieldUV(vec2 p) { return (p - vec2(-20.0)) / 160.0; }
   float sdC = (Arr.r - 0.5) * ${(2 * be).toFixed(2)};
   vec4 cpr = uMainVP * vec4(rt.x, hC, rt.y, 1.0); float sy0 = cpr.y / max(cpr.w, 1e-3);
   if (${PIXEL_ON ? 1 : 0} == 1 && ((sy0 < -0.64 && sdC < -0.6 && hI > 1.2) || (sy0 < (hI > 1.7 ? -0.24 : -0.55) && pmC > 0.5 && pmC < 2.5))) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-  if (hI > 0.6 && envInstCut(rt, hC, hI, aRoot.w / 64.0) > 0.5) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }`,
+  { int cI = int(aCutI + 0.5); vCutF = texelFetch(uCutTex, ivec2(cI % 256, cI / 256), 0).r; }
+  if (vCutF > 0.985) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }`,
+            )),
+          // (env r6) the shadow fades with the prop: an ordered dither in shadow-map space, softened by the PCF filter
+          (sh.fragmentShader = `varying float vCutF;
+` + sh.fragmentShader.replace(
+              `void main() {`,
+              `void main() {
+  if (vCutF > 0.0) { int qx = int(mod(gl_FragCoord.x, 4.0)), qy = int(mod(gl_FragCoord.y, 4.0)), xr = qx ^ qy; int b = ((xr & 1) << 3) | ((qy & 1) << 2) | (xr & 2) | ((qy & 2) >> 1); if ((float(b) + 0.5) / 16.0 < vCutF) discard; }`,
             )));
       }),
-        (dm.customProgramCacheKey = () => `world-prop-cutdepth-v5`));
+        (dm.customProgramCacheKey = () => `world-prop-cutdepth-v7`));
       for (let m of this.props.meshes || []) m.castShadow && (m.customDepthMaterial = dm);
     } catch (t) {
       console.warn(`[world-art] cut depth`, t);
@@ -11862,10 +12048,14 @@ vec2 cutFieldUV(vec2 p) { return (p - vec2(-20.0)) / 160.0; }
           }
           (m < 12 &&
             i(r, a) < 3.6 &&
-            d[m++].set(r, a, t.moving ? 1 : 0.45, t.id * 1.37),
+            ((this._ripIds[m] = t.id), d[m++].set(r, a, t.moving ? 1 : 0.45, t.id * 1.37)),
             h < 10 &&
               t !== n &&
-              (t.kind === e.CHAMPION || (t.kind === e.MONSTER && (t.epic || (t.mtMon && t.mtMon.ownerId >= 0) || (n && Math.abs(n.x - r) < 9 && Math.abs(n.y - a) < 9)))) &&
+              // (env r6) only the units the local player cares about: local trainers, their monsters and whatever is
+              // within 9 m of the player. Every trainer and every owned monster on screen (r4b) kept a dozen sight lines
+              // sweeping the forest, so trees all over the map faded in and out while nobody local was near them.
+              (t.kind === e.CHAMPION || t.kind === e.MONSTER) &&
+              (envLocal(t.id) || (t.mtMon && envLocal(t.mtMon.ownerId)) || (n && Math.abs(n.x - r) < 9 && Math.abs(n.y - a) < 9)) &&
               Math.abs(r - o) < 22 &&
               Math.abs(a - s) < 16 &&
               ((this._occIds[h] = t.id), (this._occH[h] = t.kind === e.CHAMPION ? 1.7 : t.epic ? 2.4 : 1.25),
@@ -11879,10 +12069,14 @@ vec2 cutFieldUV(vec2 p) { return (p - vec2(-20.0)) / 160.0; }
       }
     }
     for (let e = p; e < 16; e++) u[e].z = 0;
+    m = this._easeRipples(m, t.dt || 0);
     for (let e = m; e < 12; e++) d[e].z = 0;
     this.debugNoFade && (h = 0);
-    for (let e = h; e < 10; e++) f[e].w = 0;
+    h = this._easeOcc(h, t.dt || 0, c);
+    for (let e = h; e < 10; e++) ((f[e].w = 0), (this.occK[e] = 0));
+    this._updatePropFade(h, t.dt || 0, o, s);
     this._updateCut(h, t.dt || 0);
+    { let po = this.ctx.pipeline && this.ctx.pipeline.post; n.uA2C.value = !PIXEL_ON && po && po.samples > 0 ? 1 : 0; }
     (this.atmos.update(t, this.ctx.renderer, this.ctx.camera, o, s),
       this.water.update(this.ctx.renderer, this.ctx.camera));
   }

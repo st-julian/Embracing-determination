@@ -879,6 +879,8 @@ function aiContext(mt, u, target) {
     if (!validEnemy(mt, u, o, false)) continue;
     // pets ignore uninvolved wild monsters (no stray AoE into camps while laning)
     if (u.mtMon.ownerId >= 0 && o.team === TEAM.NEUTRAL && o !== target && o.targetId !== u.id && !(owner && o.targetId === owner.id)) continue;
+    // Easy (rules.js ASSIST.focusHuman): an enemy bot's monster does not aim its moves at a HUMAN trainer
+    if (o.mtTrainer && o !== target && owner && owner.bot && mt.rules && mt.rules.focusHuman(u.team, o) < 0.5) continue;
     all.push(o);
   }
   all.sort((a, b) => dist2(u.x, u.y, a.x, a.y) - dist2(u.x, u.y, b.x, b.y) || a.id - b.id);
@@ -1050,6 +1052,7 @@ export function tryAutoCast(mt, u, target) {
   if ((w.tickNo + u.phase) % AI_EVERY !== 0) return false;
   const owner = ownerOf(mt, u);
   if (owner && owner.mtTrainer.autoCast === false) return false;
+  if (u.mtCastHold > w.time) return false;   // bot difficulty: ability timing (rules.js onCast, options.js BOT_SKILL.abilityUse)
   return runAI(mt, u, target, ['a2', 'a1']);
 }
 

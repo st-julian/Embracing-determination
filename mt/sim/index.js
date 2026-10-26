@@ -10,6 +10,7 @@
 
 import '../net/importmath.js'; // FIRST: module-level Math (ai/geo.js lane lengths) gets the same bits on every engine (online lockstep)
 import { MT_EVENT } from './events.js';
+import * as rules from './rules.js';
 import * as trainers from './trainers.js';
 import * as monsters from './monsters.js';
 import * as capture from './capture.js';
@@ -25,6 +26,8 @@ import * as DATA_TYPES from '../data/types.js';
 import * as DATA_SPECIES from '../data/species.js';
 import * as DATA_ABILITIES from '../data/abilities.js';
 import * as DATA_BALANCE from '../data/balance.js';
+import * as DATA_OPTIONS from '../data/options.js';
+import { guideFor } from './guide.js';
 import '../net/importmath-end.js'; // LAST: native Math again (see ../net/importmath.js)
 
 /**
@@ -92,7 +95,8 @@ export class MTWorld {
     this.legacyBotPhase = false;   // true while the legacy bot brain is issuing commands (see ai/trainerBot.js)
     this.nextRid = 1;
     this.net = null;               // online NetSession (mt/net/lockstep.js) while this world plays an online match
-    this.modules = [trainers, monsters, capture, progression, combat, minions, structures, jungle, trainerBot, debug];
+    // rules FIRST: match options (difficulty / mode / starters) are read by every other module (mt/sim/rules.js)
+    this.modules = [rules, trainers, monsters, capture, progression, combat, minions, structures, jungle, trainerBot, debug];
     for (const m of this.modules) if (m.install) m.install(this);
   }
 
@@ -181,7 +185,11 @@ export function installMT(world, legacy) { return new MTWorld(world, legacy); }
 /** App-level namespace exposed as `window.__moba.mt` (see [MT-HOOK] app). */
 export const MT_NS = {
   version: 1,
-  data: { types: DATA_TYPES, species: DATA_SPECIES, abilities: DATA_ABILITIES, balance: DATA_BALANCE },
+  data: { types: DATA_TYPES, species: DATA_SPECIES, abilities: DATA_ABILITIES, balance: DATA_BALANCE, options: DATA_OPTIONS },
+  /** match options contract (mt/data/options.js): DEFAULT_OPTIONS, normalizeOptions, STARTERS ... */
+  options: DATA_OPTIONS,
+  /** objective guide for a trainer (mt/sim/guide.js); the app publishes it as `app.mtGuide(unitId?)` */
+  guide: (world, unitId) => guideFor(world, unitId),
   events: MT_EVENT,
   roster: defaultRoster,
   /** debug helpers bound to the CURRENT world (`__moba.world.mt.debug`); see mt/sim/debug.js */

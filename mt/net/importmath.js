@@ -5,3 +5,5 @@
 // LAST import of mt/sim/index.js) restores the native functions. ES modules evaluate their imports in order, depth first.
 import { importBegin } from './detmath.js';
 importBegin();
+// build.js lists the sim modules this page loaded from Resource Timing: keep every entry (default buffer: 250)
+try { if (typeof performance !== 'undefined' && performance.setResourceTimingBufferSize) performance.setResourceTimingBufferSize(5000); } catch { /* old engine */ }

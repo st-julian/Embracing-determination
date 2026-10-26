@@ -172,7 +172,8 @@ void main() {
     if (row >= wl - 1.0) col = mix(col, uFoamCol, 0.62);                           // 1-px waterline highlight
   }
   col = mix(col, vTint.rgb, clamp(vTint.a, 0.0, 1.0));
-  gl_FragColor = vec4(mix(col, vec3(1.0), clamp(vMisc.x, 0.0, 1.0)), uTag);
+  // flashes lift toward a warm white but keep a trace of the sprite's own shading (a full flash is not a blank cut-out)
+  gl_FragColor = vec4(mix(col, vec3(1.0, 0.97, 0.9), clamp(vMisc.x, 0.0, 1.0) * 0.85), uTag);
   #include <colorspace_fragment>
 }`;
 // "behind the wall" indicator for the local player's own units: a soft, dark team-tinted silhouette (~34 % fill, no
@@ -352,7 +353,9 @@ class PagedAtlas {
     const tex = new T.DataTexture(data, PAGE, PAGE, T.RGBAFormat, T.UnsignedByteType);
     tex.magFilter = tex.minFilter = T.NearestFilter; tex.generateMipmaps = false; tex.flipY = false;
     tex.colorSpace = T.NoColorSpace; tex.needsUpdate = true;   // raw data (material, tone, normal), never colour-decoded
-    const p = { i: this.pages.length, data, tex, shelves: [], top: 0, dirty: new Set(), gpuReady: false, used: 0, keys: new Set(), ids: new Set() };
+    const p = { i: this.pages.length, data, tex, shelves: [], top: 0, dirty: new Set(), rects: [], gpuReady: false, used: 0, keys: new Set(), ids: new Set() };
+    // [perf] a never-uploaded view of the same bytes: the source of one sub-rectangle texSubImage2D per new frame
+    p.view = new T.DataTexture(data, PAGE, PAGE, T.RGBAFormat, T.UnsignedByteType);
     tex.onUpdate = () => { p.gpuReady = true; };   // three uploaded the whole page: from now on partial row ranges
     this.pages.push(p);
     if (this.onPage) this.onPage(p);
@@ -367,7 +370,7 @@ class PagedAtlas {
   clearPage(p) {
     for (const k of p.keys) this.frames.delete(k);
     const ids = [...p.ids];
-    p.keys.clear(); p.ids.clear(); p.data.fill(0); p.shelves = []; p.top = 0; p.dirty.clear();
+    p.keys.clear(); p.ids.clear(); p.data.fill(0); p.shelves = []; p.top = 0; p.dirty.clear(); p.rects.length = 0;
     p.gpuReady = false; p.tex.clearUpdateRanges(); p.tex.needsUpdate = true;
     this.evictions++;
     if (typeof console !== 'undefined') console.info('[mt-sprites] atlas page ' + p.i + ' evicted (#' + this.evictions + ', ' + ids.length + ' sprite ids)');
@@ -389,6 +392,7 @@ class PagedAtlas {
       p.data.set(b.data.subarray(k * b.w * 4, (k + 1) * b.w * 4), (row * PAGE + r.x) * 4);
       p.dirty.add(row);
     }
+    p.rects.push(r.x, r.y, b.w, b.h);
     const f = { page: p.i, x: r.x, y: r.y, u0: r.x / PAGE, v0: r.y / PAGE, du: b.w / PAGE, dv: b.h / PAGE, w: b.w, h: b.h, ax: b.ax, ay: b.ay, dens };
     this.frames.set(key, f); p.keys.add(key); p.ids.add(id);
     return f;
@@ -401,12 +405,26 @@ class PagedAtlas {
     for (let x = 0; x < F.w; x++) if (p.data[o + x * 4 + 2]) { if (x0 < 0) x0 = x; x1 = x + 1; }
     return x0 < 0 ? null : [x0, x1];
   }
-  flush() {
+  /** upload what changed. [perf] With the renderer: ONE texSubImage2D per new frame rectangle (copyTextureToTexture from
+   *  the page's CPU view) — three's updateRanges path issues one call per dirty row at the full 2048-px page width
+   *  (a 64-row frame = 64 calls / 512 KB instead of 1 call / ~15 KB; Safari pays per call). */
+  flush(renderer) {
+    const T = this.T;
     for (const p of this.pages) {
       if (!p.dirty.size) continue;
+      if (p.gpuReady && renderer && renderer.copyTextureToTexture) {
+        const R = p.rects, box = this.box || (this.box = new T.Box2(new T.Vector2(), new T.Vector2())), at = this.at || (this.at = new T.Vector2());
+        try {
+          for (let i = 0; i < R.length; i += 4) {
+            box.min.set(R[i], R[i + 1]); box.max.set(R[i] + R[i + 2], R[i + 1] + R[i + 3]); at.set(R[i], R[i + 1]);
+            renderer.copyTextureToTexture(p.view, p.tex, box, at);
+          }
+          p.dirty.clear(); R.length = 0; continue;
+        } catch (e) { this.noCopy = true; console.warn('[mt-sprites] sub-rect upload failed, row ranges', e); }
+      }
       if (p.gpuReady) for (const row of p.dirty) p.tex.addUpdateRange(row * PAGE * 4, PAGE * 4);
       else p.tex.clearUpdateRanges();   // full upload still pending: it will carry every row
-      p.dirty.clear(); p.tex.needsUpdate = true;
+      p.dirty.clear(); p.rects.length = 0; p.tex.needsUpdate = true;
     }
   }
   reset() { for (const p of this.pages) if (p.keys.size) this.clearPage(p); }
@@ -470,6 +488,7 @@ export class SpriteSystem {
     this.dens = PPM; this.prevDens = null; this.hd = false; this.pxPerM = 64; this.upY = 0.6;   // art density (art px / m)
     // prewarm everything in the background (time-sliced): all monster forms, minions, trainers, orb
     this.stepAvg = 6; this.densReady = false; this.idleId = 0; this.disposed = false;
+    this.initWorker();
     for (const id of this.prewarmOrder()) this.enqueue(id);
     this.stats = { built: 0, buildMs: 0, onDemand: 0 };
     /** Render-only per-unit overrides for VFX: unitId -> {flash 0..1, scale, hidden, hideUntil, until, tint:[r,g,b,amount]} */
@@ -491,6 +510,7 @@ export class SpriteSystem {
     if (D === this.dens) return;
     this.prevDens = this.dens; this.dens = D;
     this.built.clear(); this.jobs.clear(); this.queue.length = 0; this.prewarmFull = false; this.spans.clear();
+    if (this.bw) { this.bwSpecs.clear(); this.bwOut.clear(); }   // in-flight results of the old density are dropped on arrival
     for (const id of this.prewarmOrder()) this.enqueue(id);
   }
   /** palette base row for an art id (team variants = different rows over the same frames) */
@@ -522,7 +542,82 @@ export class SpriteSystem {
       yield;
     }
   }
-  enqueue(id) { if (!this.prewarmFull && !this.built.has(id) && !this.jobs.has(id) && SPECIES_ART[id]) { this.jobs.set(id, this.frameJob(id)); this.queue.push(id); if (this.stepAvg) this.scheduleIdle(); } }
+  // ---- [perf] background prewarm in a module worker (sprites.worker.js): the main thread only copies finished frames
+  // into the atlas (1 per frame in a match, 4 otherwise); no raster work in game frames. Falls back to the
+  // time-sliced main-thread pump when Workers are unavailable or the worker fails. ?spriteworker=0 disables it.
+  initWorker() {
+    this.bw = null;
+    let off = false; try { off = new URLSearchParams(location.search).get('spriteworker') === '0'; } catch (e) { /* no location */ }
+    if (off || typeof Worker === 'undefined') return;
+    try { this.bw = new Worker(new URL('./sprites.worker.js', import.meta.url), { type: 'module' }); } catch (e) { this.bw = null; return; }
+    this.bwFlight = new Map();   // key -> {id, view, anim, i, rs, D}
+    this.bwSpecs = new Map();    // id -> frame spec iterator
+    this.bwOut = new Map();      // id -> {n: frames in flight, done: iterator exhausted}
+    this.bwDone = [];            // finished frames waiting for an atlas copy
+    this.bwStats = { posted: 0, added: 0, dropped: 0, ms: 0, errors: 0, urgent: 0 };
+    this.bwUrgent = 0;           // urgent (visible-now) frames in flight
+    this.bw.onmessage = (e) => { const j = this.bwFlight.get(e.data.key); if (j && j.urgent) this.bwDone.unshift(e.data); else this.bwDone.push(e.data); };
+    this.bw.onerror = (e) => { if (e && e.preventDefault) e.preventDefault(); this.workerFailed(e && e.message); };
+  }
+  workerFailed(msg) {
+    if (!this.bw) return;
+    console.warn('[mt-sprites] bake worker unavailable (' + (msg || 'error') + '): main-thread prewarm');
+    try { this.bw.terminate(); } catch (e) { /* gone */ }
+    this.bw = null; this.bwDone = []; this.bwUrgent = 0; this.jobs.clear(); this.queue.length = 0;
+    for (const id of this.prewarmOrder()) if (!this.built.has(id)) this.enqueue(id);
+  }
+  *frameSpecs(id) {
+    const S = SPECIES_ART[id], rs = this.sizeOf(S), D = this.dens;
+    for (const view of S.views) for (const anim of Object.keys(S.anims)) for (let i = 0; i < S.anims[anim].n; i++) {
+      if (D !== this.dens) return 'stale';
+      const key = this.keyOf(id, view, anim, i, rs, D);
+      if (this.atlas.frames.has(key) || this.bwFlight.has(key)) continue;
+      yield { key, id, view, anim, i, rs, D, scale: ART_SCALE * rs * D / PPM };
+    }
+  }
+  urgent(key, id, view, anim, i, rs, D) {
+    const j = { key, id, view, anim, i, rs, D, scale: ART_SCALE * rs * D / PPM, o: { n: 1, done: true }, urgent: true, at: this.frameNo };
+    this.bwFlight.set(key, j); this.bwUrgent++; this.bwStats.urgent++;
+    this.bw.postMessage({ key, id, view, anim, i, scale: j.scale });
+  }
+  bwFinish(id) { const o = this.bwOut.get(id); if (o && o.done && o.n <= 0) { this.bwOut.delete(id); this.finishJob(id); } }
+  feedWorker() {
+    while (this.bw && this.bwFlight.size - this.bwUrgent < 4 && this.queue.length && !this.prewarmFull) {
+      const id = this.queue[0];
+      let it = this.bwSpecs.get(id); if (!it) this.bwSpecs.set(id, it = this.frameSpecs(id));
+      let o = this.bwOut.get(id); if (!o) this.bwOut.set(id, o = { n: 0, done: false });
+      const r = it.next();
+      if (r.done) {
+        this.bwSpecs.delete(id); this.queue.shift();
+        if (r.value === 'stale') { this.jobs.delete(id); this.bwOut.delete(id); continue; }
+        o.done = true; this.bwFinish(id); continue;
+      }
+      const j = r.value; j.o = o; o.n++;     // the counter travels with the spec (a stale result never touches a newer job)
+      this.bwFlight.set(j.key, j); this.bwStats.posted++;
+      this.bw.postMessage({ key: j.key, id: j.id, view: j.view, anim: j.anim, i: j.i, scale: j.scale });
+    }
+  }
+  drainWorker() {
+    // in a match each copied frame also means a row-range texture upload at flush(): 1 per frame (+ 1 ms budget);
+    // lobby / loading / menus take 4
+    const t0 = performance.now(), app = this.ctx.app, inGame = !app || app.state === 'game', cap = inGame ? 1 : 4, budget = inGame ? 1 : 3;
+    for (let n = 0; this.bwDone.length && (n < cap || (this.bwFlight.get(this.bwDone[0].key) || {}).urgent) && performance.now() - t0 < budget;) {
+      const m = this.bwDone.shift(), j = this.bwFlight.get(m.key);
+      this.bwFlight.delete(m.key);
+      if (!j) continue;
+      if (j.urgent) this.bwUrgent--;
+      const o = j.o; o.n--;
+      if (m.error) { this.bwStats.errors++; if (this.bwStats.errors > 20) { this.workerFailed(m.error); return; } }
+      else if (j.D === this.dens && !this.atlas.frames.has(m.key)) {
+        // visible-now frames may evict like the synchronous on-demand path; prewarm never evicts
+        const F = this.atlas.add(m.key, j.id, { w: m.w, h: m.h, ax: m.ax, ay: m.ay, data: new Uint8Array(m.buf) }, j.urgent ? this.frameNo : 0, j.D);
+        if (!F) { if (!j.urgent) { this.prewarmFull = true; this.queue.length = 0; this.bwSpecs.clear(); } }
+        else { this.aliasIdle(j.id, j.view, j.anim, j.i, j.rs, j.D, F); this.bwStats.added++; this.bwStats.ms += m.ms || 0; if (!j.urgent) n++; }
+      } else this.bwStats.dropped++;
+      if (this.bwOut.get(j.id) === o) this.bwFinish(j.id);
+    }
+  }
+  enqueue(id) { if (!this.prewarmFull && !this.built.has(id) && !this.jobs.has(id) && SPECIES_ART[id]) { this.jobs.set(id, this.frameJob(id)); this.queue.push(id); if (this.stepAvg && !(this.bw && this.densReady)) this.scheduleIdle(); } }
   /** Make sure `id` is queued, with priority (it is on screen). Frames themselves are baked on demand. */
   prioritize(id) {
     if (this.built.has(id) || !SPECIES_ART[id]) return;
@@ -536,7 +631,12 @@ export class SpriteSystem {
     if (rs == null) rs = this.sizeOf(S);
     const D = this.dens, fr = this.atlas.frames, key = this.keyOf(id, view, anim, fi, rs, D);
     let F = fr.get(key);
-    if (!F && this.demandBudget > 0) {
+    // [perf] with the bake worker, a visible frame that is not baked yet is requested from the worker at high priority and
+    // a fallback frame of the same sprite (below) shows for the 1-3 frames it takes — no raster work in the game frame.
+    // Synchronous baking only when the worker is gone, stuck (> 30 frames), or nothing of this sprite exists yet.
+    const inFlight = this.bw && this.bwFlight.get(key);
+    if (!F && this.bw && !inFlight && this.bwUrgent < 12) this.urgent(key, id, view, anim, fi, rs, D);
+    else if (!F && this.demandBudget > 0 && (!this.bw || (inFlight && this.frameNo - inFlight.at > 30) || (!inFlight && this.bwUrgent >= 12))) {
       const t0 = performance.now();
       const b = renderSpriteData(id, view, anim, fi, { scale: ART_SCALE * rs * D / PPM, noFx: true, pool: true });
       F = this.atlas.add(key, id, b, this.frameNo, D);
@@ -573,18 +673,22 @@ export class SpriteSystem {
     else this.finishJob(id);
   }
   /** in-frame prewarm: at most ONE step per frame, and only when the running per-step cost fits the budget */
-  pump(budgetMs) { if (this.queue.length && this.stepAvg <= budgetMs) this.pumpStep(); }
+  pump(budgetMs) {
+    if (this.bw) { this.drainWorker(); if (this.densReady) this.feedWorker(); return; }
+    if (this.queue.length && this.stepAvg <= budgetMs) this.pumpStep();
+  }
   /** background prewarm in idle time: the lobby / loading screen (bulk) and spare time between game frames */
   idlePump(deadline) {
     this.idleId = 0;
     if (this.disposed) return;
     if (!this.densReady) this.predictDensity();
-    if (this.densReady) {
+    if (this.densReady && this.bw) { this.drainWorker(); this.feedWorker(); }
+    else if (this.densReady) {
       const t0 = performance.now(), inGame = t0 - (this.lastUpdateMs || -1e9) < 400;
       const left = () => (deadline ? deadline.timeRemaining() : (inGame ? 0 : 14 - (performance.now() - t0)));
       for (let n = 0; this.queue.length && n < 64 && left() > this.stepAvg * 1.15; n++) this.pumpStep();
     }
-    if (this.queue.length || !this.densReady) this.scheduleIdle();
+    if ((this.queue.length || !this.densReady) && !(this.bw && this.densReady)) this.scheduleIdle();
   }
   scheduleIdle() {
     if (this.idleId || this.disposed) return;
@@ -612,7 +716,11 @@ export class SpriteSystem {
     const app = typeof window !== 'undefined' ? window.__moba : null;
     if (app && (app.mtPixel || (app.params && app.params.get && app.params.get('pixel') === '1'))) { this.densReady = true; return; }
     const gl = this.ctx.renderer && this.ctx.renderer.getContext && this.ctx.renderer.getContext();
-    const R = this.rigPxPerM(gl ? gl.drawingBufferHeight : 0);
+    // [perf] the scene-target height (dynamic resolution renders the scene below the canvas): the density is chosen there
+    const pipe = this.ctx.pipeline || (app && app.pipeline), post = pipe && pipe.post;
+    let H = gl ? gl.drawingBufferHeight : 0;
+    if (post && !post.pixelMode) H = post.sceneRT && post.sceneRT.height > 0 ? post.sceneRT.height : Math.round(H * (post.sceneScaleFor ? post.sceneScaleFor(post.cfg, post.pixelRatio) : 1));
+    const R = this.rigPxPerM(H);
     if (!R) return;
     this.setDensity(this.densFor(R.base)); this.densReady = true;
   }
@@ -677,7 +785,16 @@ export class SpriteSystem {
   updateCamera(app) {
     const cam = this.ctx.camera, T = this.tmp, r = this.ctx.renderer;
     const PX = app && app.mtPixel;
-    if (PX && PX.internalW > 0) T.vp.set(PX.internalW, PX.internalH); else r.getDrawingBufferSize(T.vp);
+    if (PX && PX.internalW > 0) T.vp.set(PX.internalW, PX.internalH);
+    else {
+      r.getDrawingBufferSize(T.vp);
+      // [perf] the scene may render below the canvas size (app.mtPerf dynamic resolution, legacy tier scale 0.9): snap,
+      // size AND pick the art density on the grid of the target the quads are actually rasterised into, so one art px
+      // is a whole number of scene px (exact texels, no in-scene filtering) at any scene scale; only the final
+      // upsample to the canvas filters, once
+      const pipe = this.ctx.pipeline || (app && app.pipeline), rt = pipe && pipe.post && !pipe.post.pixelMode && pipe.post.sceneRT;
+      if (rt && rt.width > 0 && rt.height > 0 && (rt.width !== T.vp.x || rt.height !== T.vp.y)) T.vp.set(rt.width, rt.height);
+    }
     this.uniforms.uViewport.value.copy(T.vp);
     cam.updateMatrixWorld();
     const e = cam.matrixWorld.elements;
@@ -704,14 +821,20 @@ export class SpriteSystem {
       k = Math.max(1, Math.round(pxPerM / PPM));
     } else {
       // HD: pick the art density so that, at camera zoom 1, one art px is a WHOLE number of screen px and the sprite
-      // keeps its world size (re-bake only when the window size changes it by > 8 %, <= 6 % size slack); while the camera
+      // keeps its world size (re-bake only when the window or [perf] scene size changes it by > 6 %, <= 6 % size slack); while the camera
       // zooms, the scale goes fractional and the shader switches to sharp-bilinear sampling (no shimmer). The camera
       // rig gives a stable zoom-1 value (the same one the lobby prewarm predicted); else measure at the focus.
       const R = this.rigPxPerM(T.vp.y);
       if (R && R.now > 0) pxPerM = R.now;
       const zoom = app && app.mtCamera && app.mtCamera.zoom > 0 ? app.mtCamera.zoom : 1;
-      const want = this.densFor(R ? R.base : pxPerM * zoom);
-      if (!this.densReady || (this.dens === PPM && !this.hd) || Math.abs(want - this.dens) / this.dens > 0.08) { this.setDensity(want); this.densReady = true; }
+      // [perf] re-bake past 6 % (the quad snap tolerance): at zoom 1 every frame of the current density lands on whole
+      // scene px; a render-scale change re-bakes in the worker while the old frames stay on screen
+      this.pxBase = R ? R.base : pxPerM * zoom;   // [perf] zoom-1 screen px per metre (pushSprite snaps k there)
+      // [perf] snapped (1) vs true zoomed (0) sprite scale, eased over 0.3 s; hysteresis 5 % in / 6 % out of the band
+      const zr = pxPerM / this.pxBase, inBand = Math.abs(zr - 1) < ((this.snapB ?? 1) > 0.5 ? 0.06 : 0.05);
+      this.snapB = Math.max(0, Math.min(1, (this.snapB ?? 1) + (inBand ? 1 : -1) * (this.rdt || 0) / 0.3));
+      const want = this.densFor(this.pxBase);
+      if (!this.densReady || (this.dens === PPM && !this.hd) || Math.abs(want - this.dens) / this.dens > 0.06) { this.setDensity(want); this.densReady = true; }
       k = pxPerM / this.dens;
     }
     this.hd = hd; this.pxPerM = pxPerM; this.upY = upY;
@@ -763,9 +886,17 @@ export class SpriteSystem {
     const F = this.frameFor(id, view, anim, fi, o.rs);
     if (!F) return null;
     const A = this.sprites.arrays, i = this.sprites.push(), tint = o.tint;
-    // screen px per art px for this frame (its own density), snapped to a whole number when within 6 %
-    let kk = (this.hd ? this.pxPerM / (F.dens || PPM) : this.k) * (o.scale ?? 1);
-    const kr = Math.round(kk); if (kr >= 1 && Math.abs(kk - kr) < 0.06 * kk) kk = kr;
+    // screen px per art px for this frame (its own density), snapped to a whole number when within 6 %.
+    // [perf] HD: snapping the ZOOMED value made every sprite on screen jump 6 % in size in one frame whenever the camera
+    // zoom crossed 1.06 (tools/mt-device.cjs --mode jitter: the solo camera drifts 1.00 -> 1.065 while walking a lane).
+    // Now the whole number is taken at zoom 1 and held while the zoom stays within ~6 % (crisp); outside, the true
+    // zoomed size takes over — and the switch between the two is EASED over 0.3 s (snapB, updateCamera), never a pop.
+    let kk;
+    if (this.hd) {
+      const zb = this.pxBase > 0 ? this.pxBase : this.pxPerM, k1 = zb / (F.dens || PPM) * (o.scale ?? 1), kr = Math.round(k1);
+      const ks = kr >= 1 && Math.abs(k1 - kr) < 0.06 * k1 ? kr : k1, kt = k1 * (this.pxPerM / zb), b = this.snapB ?? 1;
+      kk = b >= 1 ? ks : kt + (ks - kt) * b;
+    } else { kk = this.k * (o.scale ?? 1); const kr = Math.round(kk); if (kr >= 1 && Math.abs(kk - kr) < 0.06 * kk) kk = kr; }
     A.iPos[i * 4] = x; A.iPos[i * 4 + 1] = gy; A.iPos[i * 4 + 2] = z; A.iPos[i * 4 + 3] = o.flip || 0;
     A.iSize[i * 4] = F.w; A.iSize[i * 4 + 1] = F.h; A.iSize[i * 4 + 2] = kk; A.iSize[i * 4 + 3] = F.ax;
     A.iUv[i * 4] = F.u0; A.iUv[i * 4 + 1] = F.v0; A.iUv[i * 4 + 2] = F.du; A.iUv[i * 4 + 3] = F.dv;
@@ -851,7 +982,11 @@ export class SpriteSystem {
       const M = u.mtMon;
       if (M && M.evolving) { const p = Math.min(1, Math.max(0, 1 - (M.evolving.until - now) / 2.4)); flash = 0.5 + 0.5 * Math.sin(now * (6 + 34 * p * p)); }
       const pop = Math.max(0, 1 - (now - v.evoT) * 2.5); flash = Math.max(flash, pop);
-      if (now - v.hitT < 0.08 && u.alive) flash = Math.max(flash, 0.55);   // hit blink (kept short / partial: stills never read as a white ghost)
+      // hit blink. [env r6, iPad playtest #9 "white ghosts"] every hit used to restart a 55 % white blink, so a unit under
+      // sustained fire (DOT ticks, minion pokes, multi-hits) stayed pale for seconds - measured in a mid-river lane fight:
+      // one monster 12 % of all frames. Now one short, lighter blink per 0.45 s at most.
+      if (v.hitT !== v.blinkHit) { v.blinkHit = v.hitT; if (now - (v.blinkT ?? -99) > 0.45) v.blinkT = now; }
+      if (now - (v.blinkT ?? -99) < 0.07 && u.alive) flash = Math.max(flash, 0.32);
       // faint / defeated anim plays out, holds a beat, then the sprite sinks into the ground (0.45 s)
       if (!u.alive) dis = Math.min(1, Math.max(0, (deadFor - (S.kind === 'trainer' ? 1.75 : 0.95)) / 0.45));
       const rs = this.sizeOf(S) * (u.kind === KIND.MINION && u.subtype === 'super' ? SIZE.super : 1);
@@ -929,11 +1064,12 @@ export class SpriteSystem {
     for (const [id, v] of this.views) if (v.seen !== fno) this.views.delete(id);
     this.sprites.end(); this.marks.end();
     this.pump(2);           // background prewarm (on-screen ids first, then evolutions, other teams...)
-    this.atlas.flush();
+    this.atlas.flush(this.atlas.noCopy ? null : this.ctx.renderer);
   }
 
   dispose() {
     this.disposed = true;
+    if (this.bw) { try { this.bw.terminate(); } catch (e) { /* gone */ } this.bw = null; }
     if (this.idleId) { if (typeof cancelIdleCallback === 'function') cancelIdleCallback(this.idleId); clearTimeout(this.idleId); this.idleId = 0; }
     this.sprites.dispose(); this.marks.dispose();
     for (const p of this.atlas.pages) p.tex.dispose();

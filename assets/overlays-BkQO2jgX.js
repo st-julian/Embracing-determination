@@ -30,6 +30,7 @@ import {
 } from "./unitRead-BVS0cQLI.js";
 import { t as D } from "./palette-L_rDAXd8.js";
 import { n as O } from "./sync-2oxeFGdP.js";
+import { liftAtLoad as __mtLiftAtLoad } from "../mt/render/loadtime.js"; // [MT-HOOK] liftAtLoad import (mt/render/loadtime.js)
 var k = `"Avenir Next", "Avenir", "Segoe UI", "Helvetica Neue", Roboto, system-ui, sans-serif`;
 function A(e, t) {
   let n = document.createElement(`canvas`);
@@ -3156,7 +3157,7 @@ void main() {
         a = e.alpha;
       if (
         !this.liftDone &&
-        i &&
+        (i || __mtLiftAtLoad()) && // [MT-HOOK] liftAtLoad: the structure-lift bake (GPU render + 512² readback) runs behind the loading screen, not in the first match frames
         ++this.liftFrames % 20 == 10 &&
         this.liftInfo.tries < 20
       )

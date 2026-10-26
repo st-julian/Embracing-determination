@@ -1108,11 +1108,15 @@ function Fe(e = {}) {
 				vec2 texel = 1.0 / shadowMapSize;
 				float zR = shadowCoord.z;
 				float wpt = max( shadowRadius, 1.0e-5 ) * ${n(109, 1)} / shadowMapSize.x;   // world units per shadow texel
-				float phi = lookIGN( gl_FragCoord.xy ) * 6.2831853;
+				// (env r6, iPad "glitchy while playing") the tap rotation is keyed to the SHADOW MAP (half-texel cells; the
+				// shadow camera is snapped to whole texels), so the penumbra dither sticks to the ground instead of sliding
+				// under it — screen-keyed noise made every soft shadow edge boil while the camera followed the trainer.
+				vec2 lookSq = floor( shadowCoord.xy * shadowMapSize * 2.0 );
+				float phi = lookIGN( lookSq ) * 6.2831853;
 				mat2 lookRot = mat2( cos( phi ), sin( phi ), - sin( phi ), cos( phi ) );   // column-major: rot(phi)
 					// a second hash on the SWAPPED coordinates: decorrelated from phi, so the angle and the radius of the tap
 					// set do not vary together along a scanline (which is what made the lattice visible).
-					float jit = mix( ${n(1 - t.jitter)}, 1.0, lookIGN( gl_FragCoord.yx ) );
+					float jit = mix( ${n(1 - t.jitter)}, 1.0, lookIGN( lookSq.yx + 17.0 ) );
 				// 1) blocker search over the WIDEST penumbra we can produce, so the lit side of a wide soft edge still
 				//    finds its caster (a centre-only search hardens one side of every penumbra).
 				float searchT = min( ${n(t.maxW)} / wpt, ${n(t.maxTexels, 1)} );
@@ -2652,6 +2656,8 @@ void main() {
         stencil: !1,
         depth: !0,
         powerPreference: `high-performance`,
+        // (env r6) ?prec=mediump: emulate a mobile GPU's float precision in every three.js shader (test switch)
+        ...(i && i.get(`prec`) === `mediump` ? { precision: `mediump` } : {}),
       }));
       ((l.outputColorSpace = s),
         (l.toneMapping = 4),

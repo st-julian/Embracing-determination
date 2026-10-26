@@ -150,4 +150,17 @@ export const MT_EVENT = Object.freeze({
   WAVE: 'mt_wave',
   /** {unit, x, y, tx, ty, radius, delay} river boss telegraphs its Gale Burst (burst follows after `delay`) */
   BOSS_GUST: 'mt_boss_gust',
+  /**
+   * (gameplay, rules.js) QUICK time limit. phase 'warn' once, 60 s before; phase 'end' when time is up and the match is
+   * decided on points (the loser's Nexus falls right after: the normal mt_match_end follows).
+   * {phase:'warn'|'end', at (absolute time of the limit), score:[blue, red], winner (end only)}
+   */
+  TIME_LIMIT: 'mt_time_limit',
+  /**
+   * (gameplay, rules.js) Easy / Normal player assists for a HUMAN trainer. kind 'rescue' (low HP: shield + haste),
+   * 'guard' (respawn protection), 'potion' (the monster drank its potion by itself), 'credit' (a team-mate's kill was
+   * credited to you: {victim}), 'hold' (your monster holds its attacks so you can throw an orb: {target, until}).
+   * {trainer, team, kind, until?, victim?, target?, x, y}
+   */
+  ASSIST: 'mt_assist',
 });

@@ -50239,6 +50239,7 @@ var Rk = [
   ],
 ];
 async function zk() {
+  let __mtPB = await import(`../mt/render/perf.js`).then((e) => e.bootProfile(Nk, $), (e) => (Ik(`perf:boot`, e), null)); // [MT-HOOK] perfBoot (device-aware starting tier + canvas pixel ratio, mt/render/perf.js)
   (($.pipeline = new (await Lk(`pipeline`, () =>
     Mk(
       () => import(`./pipeline-CKa1FRHe.js`),
@@ -50249,8 +50250,8 @@ async function zk() {
     THREE: fp,
     canvas: document.getElementById(`game-canvas`),
     app: $,
-    quality: Nk.get(`quality`) || `high`,
-    dpr: Nk.has(`dpr`) ? Number(Nk.get(`dpr`)) : null,
+    quality: Nk.get(`quality`) || (__mtPB && __mtPB.tier) || `high`, // [MT-HOOK] perfBoot (tier)
+    dpr: Nk.has(`dpr`) ? Number(Nk.get(`dpr`)) : (__mtPB && __mtPB.usedPr && __mtPB.pr) || null, // [MT-HOOK] perfBoot (canvas px per CSS px)
   })),
     $.registry.set(`pipeline`, $.pipeline));
   let e = Nk.get(`scenario`);
@@ -50262,6 +50263,7 @@ async function zk() {
       });
   let t = await Promise.all(Rk.map(([e, t]) => Lk(e, t)));
   for (let e = 0; e < Rk.length; e++) {
+    await ($.mtBootStep && $.mtBootStep(e, Rk.length)); // [MT-HOOK] bootStep (boot progress bar + a paint between subsystem constructors, mt/render/perf.js)
     let [n] = Rk[e],
       r = t[e];
     if (r)
@@ -50299,10 +50301,11 @@ function Bk() {
     },
   };
 }
-function Vk({ champion: e = `vyre`, seed: t = 7, players: n = null } = {}) {
+function Vk({ champion: e = `vyre`, seed: t = 7, players: n = null, options: mtO = null } = {}) { // [MT-HOOK] options: app.newMatch({seed, players, options}) (mt/data/options.js)
   let r = (Nk.get(`name`) || `Summoner`).slice(0, 16);
   (($.world = new ww({
     seed: t,
+    options: mtO && typeof mtO == `object` ? mtO : void 0, // [MT-HOOK] options -> world.options -> world.mt.rules (mt/sim/rules.js)
     players:
       n ||
       Tw(e, [
@@ -50352,6 +50355,7 @@ function qk(e) {
     a = $.frameEvents;
   a.length = 0;
   let o = $.state === `game` || $.state === `menu` || $.state === `end` || $.state === `lobby`; // [MT-HOOK] lobby (backdrop world keeps running)
+  $.mtInputEarly && $.mtInputEarly(r); // [MT-HOOK] inputEarly (touch joystick / pad stick -> 'dir' before this frame's sim ticks: one frame less input lag; mt/ui/input/gamepad.js, never throws)
   if (!$.paused && o) {
     Wk += r * $.timeScale;
     $.mtNet && $.mtNet.active && (Wk = $.mtNet.pace(Wk, r)); // [MT-HOOK] netPace (online lockstep: drift correction + stall backlog clamp, mt/net/online.js)
@@ -50379,6 +50383,7 @@ function qk(e) {
     state: $.state,
     app: $,
   };
+  $.mtNet && $.mtNet.active && $.mtNet.visualBegin(c); // [MT-HOOK] netVisual (online: render-only prediction of the local trainer for this frame's update + render; restored below and before any tick, mt/net/predict.js)
   try {
     $.pipeline.update(c);
   } catch (e) {
@@ -50400,6 +50405,7 @@ function qk(e) {
   } catch (e) {
     Ik(`pipeline:render`, e);
   }
+  $.mtNet && $.mtNet.visualEnd(); // [MT-HOOK] netVisual (restore the sim values)
   (($.metrics.renderMs = performance.now() - l),
     ($.metrics.frameMs = performance.now() - t));
 }

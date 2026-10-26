@@ -86,7 +86,7 @@ export const XP = {
 };
 
 /** DESIGN §8 Evolution */
-export const EVOLUTION = { channel: 2.4, damageTaken: 0.5 };
+export const EVOLUTION = { channel: 1.2, damageTaken: 0.5, heal: 0.3 };   // playtest: 2.4 s needed a quiet moment casual players never get
 
 /** DESIGN §9 Minions. Legacy subtypes are kept (melee/caster/siege/super) so the legacy creeps renderer still draws them. */
 export const MINIONS = {

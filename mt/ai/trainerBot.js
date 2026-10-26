@@ -26,6 +26,7 @@ import { rand01 } from '../sim/util.js';
 import { dist, fountainOf, pointAtTeam, progressOf, ownSide, BOSS_PIT, nearestLane } from './geo.js';
 import { mult, formMult, dps, ehp, estimateFight, enemyTowerAt, lineValue, chanceAt, recordPower, TOWER_RANGE } from './assess.js';
 import { makeTeam, updateTeam, laneState, reportFight, bossUnit, activeLevel } from './team.js';
+import { BOT_SKILL } from '../data/options.js';
 
 const THINK = 15;   // 0.5 s at 30 Hz
 const MICRO = 3;
@@ -72,7 +73,7 @@ function controller(mt, world, legacy) {
     if (!u.bot) continue;
     if (!u.mtTrainer) { others = true; continue; }
     const b = brainOf(mt, u);
-    if ((world.tickNo + b.slot) % THINK === 0) {
+    if ((world.tickNo + b.slot) % b.thinkEvery === 0) {
       const TM = TB.teams[u.team];
       mt.guard('trainerBot.team', () => updateTeam(mt, TM, TB.brains));
       mt.guard('trainerBot', () => think(mt, u, b, TM));
@@ -91,9 +92,12 @@ function brainOf(mt, u) {
   if (b) return b;
   const w = mt.world, seed = (w.seed | 0) * 7919 + u.id * 104729;
   const r = (k) => { let h = Math.imul(seed ^ (k * 0x9e3779b1), 0x85ebca6b) >>> 0; h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35) >>> 0; h ^= h >>> 16; return h / 4294967296; };
+  // difficulty (mt/data/options.js BOT_SKILL via mt/sim/rules.js): reaction delay, aggression, focus, kiting, misplays
+  const skill = mt.rules ? mt.rules.botSkill(u) : BOT_SKILL.hard;
+  const clampA = (v) => Math.min(0.95, Math.max(0.1, v));
   b = {
-    id: u.id, name: u.name, team: u.team, slot: (u.id * 5) % THINK,
-    pers: { aggression: +(0.3 + 0.55 * r(1)).toFixed(2), greed: +(0.25 + 0.55 * r(2)).toFixed(2) },
+    id: u.id, name: u.name, team: u.team, slot: (u.id * 5) % THINK, skill, thinkEvery: Math.max(1, Math.round(THINK * skill.think)), mis: null,
+    pers: { aggression: +clampA(0.3 + 0.55 * r(1) + skill.aggression).toFixed(2), greed: +(0.25 + 0.55 * r(2)).toFixed(2) },
     goal: 'IDLE', why: 'spawned', score: 0, since: w.time, top: [], targetId: -1, anchor: null,
     capture: null, jungle: null, moveReq: null, stuck: { x: u.x, y: u.y, t: w.time }, laneWhy: '',
     actions: [], history: [], lastGoalT: w.time, fightT: -99,
@@ -178,7 +182,15 @@ function think(mt, u, b, TM) {
     else { setGoal(mt, b, 'RECALL', 1, 'channelling recall'); }
     return;
   }
-  actions(mt, u, b, c);
+  // misplay (difficulty): for ~2 s the bot is 'distracted' (no potion / swap / skill), 'hesitant' (2nd-best goal) or
+  // 'stubborn' (ignores retreat / recall), deterministic per seed + tick
+  if (b.mis && t >= b.mis.until) b.mis = null;
+  if (!b.mis && b.skill.misplay > 0 && rand01(w, u.id, 0x3157) < b.skill.misplay) {
+    b.mis = { kind: ['distracted', 'hesitant', 'stubborn'][Math.floor(rand01(w, u.id, 0x3158) * 3) % 3], until: t + 1.5 + rand01(w, u.id, 0x3159) * 1.5 };
+    TB.stats.misplays = (TB.stats.misplays || 0) + 1;
+  }
+  const mis = b.mis ? b.mis.kind : null;
+  if (mis !== 'distracted') actions(mt, u, b, c);
   // score goals
   const cands = [];
   const add = (goal, s) => { if (s && s.u > 0) cands.push({ goal, ...s }); };
@@ -194,12 +206,13 @@ function think(mt, u, b, TM) {
   add('JUNGLE', scoreJungle(mt, u, b, c));
   add('FARM_LANE', scoreFarm(mt, u, b, c));
   for (const k of cands) if (k.goal === b.goal) k.u += 0.08;  // commitment
+  if (mis === 'stubborn') for (let i = cands.length - 1; i >= 0; i--) if (cands[i].goal === 'RETREAT' || cands[i].goal === 'RECALL') cands.splice(i, 1);
   cands.sort((a, z) => z.u - a.u);
   b.top = cands.slice(0, 4).map((k) => [k.goal, +k.u.toFixed(2)]);
-  const best = cands[0];
+  const best = mis === 'hesitant' && cands.length > 1 && cands[0].goal !== 'EVOLVE' ? cands[1] : cands[0];
   if (!best) { setGoal(mt, b, 'IDLE', 0, 'nothing to do'); return; }
-  setGoal(mt, b, best.goal, best.u, best.why);
-  const ST = TB.stats; ST.goalTime[best.goal] = +((ST.goalTime[best.goal] || 0) + THINK / 30).toFixed(1);
+  setGoal(mt, b, best.goal, best.u, mis ? best.why + ` [misplay: ${mis}]` : best.why);
+  const ST = TB.stats; ST.goalTime[best.goal] = +((ST.goalTime[best.goal] || 0) + b.thinkEvery / 30).toFixed(1);
   best.run();
 }
 
@@ -305,8 +318,8 @@ function pickCaptureTarget(mt, u, b, c, mode) {
   const vctx = { myLines, teamLines: teamL, enemyTypes: eT, allLines: allL };
   // leave the starter meadow nearest to an allied HUMAN who has no monster yet (first 90 s): don't race the player
   const reserved = new Set();
-  if (w.time < 90) for (const h of w.champions) {
-    if (h.team !== team || h.bot || !h.mtTrainer || h.mtTrainer.party.length) continue;
+  if (w.time < 120) for (const h of w.champions) {
+    if (h.team !== team || h.bot || !h.mtTrainer || h.mtTrainer.party.length >= TRAINER.maxParty) continue;   // a human with a free slot
     let bc = null, bd2 = 1e9;
     for (const [cid, st2] of w.campState) if (st2.camp.mtMeadow) { const dd = dist(h.x, h.y, st2.camp.x, st2.camp.y); if (dd < bd2) { bd2 = dd; bc = cid; } }
     if (bc) reserved.add(bc);
@@ -355,7 +368,8 @@ function pickCaptureTarget(mt, u, b, c, mode) {
 }
 
 function scoreCapture(mt, u, b, c) {
-  const { t, T } = c;
+  const { T } = c;
+  const t = c.t / (mt.rules ? mt.rules.M.aiTime : 1);   // QUICK mode: the same plan in a shorter match
   let mode = null, base = 0;
   if (!T.party.length) { mode = 'first'; base = c.hpT < 0.5 ? 0.45 + 0.6 * c.hpT : 0.97; }
   else if (T.party.length === 1 && t < 420 + 200 * b.pers.greed) { mode = 'second'; base = 0.5 + 0.25 * b.pers.greed - Math.max(0, t - 240) / 900; }
@@ -366,12 +380,12 @@ function scoreCapture(mt, u, b, c) {
   if (mode !== 'first' && c.fight.enemies.length && c.fight.ratio < (keep ? 1.1 : 1.5)) return null;
   // keep the current target while it is valid
   let tgt = b.capture && c.w.units.get(b.capture.tid);
-  if (!tgt || !(isCapturable(tgt) || (tgt.mtMon && tgt.mtMon.capturing && tgt.mtMon.capturing.trainer === u.id)) || t - b.capture.since > 75) {
+  if (!tgt || !(isCapturable(tgt) || (tgt.mtMon && tgt.mtMon.capturing && tgt.mtMon.capturing.trainer === u.id)) || c.t - b.capture.since > 75) {
     const pick = pickCaptureTarget(mt, u, b, c, mode);
     if (!pick) { b.capture = null; return null; }
     if (pick.s < (mode === 'first' ? -9 : 0.3)) return null;
     if (!b.capture || b.capture.tid !== pick.o.id) { mt.trainerBot.stats.captureGoals++; act(mt, b, `CAPTURE target: ${pick.o.name} Lv${pick.o.level} (${pick.why})`); }
-    b.capture = { tid: pick.o.id, since: t, why: pick.why, line: pick.line, mode };
+    b.capture = { tid: pick.o.id, since: c.t, why: pick.why, line: pick.line, mode };
     tgt = pick.o;
   }
   let uu = base;
@@ -520,18 +534,22 @@ function scoreRetreat(mt, u, b, c) {
 function pickFightTarget(mt, u, b, c, around, radius) {
   const { pet, petOk } = c;
   const src = petOk ? pet : u, myD = Math.max(1, dps(mt, src));
+  const F = b.skill ? b.skill.focus : 1;   // difficulty: 1 = fastest kill / trainers first; lower blends toward "nearest"
   let best = null, bs = -1e9;
   for (const e of c.fight.enemies) {
     if (dist(around.x, around.y, e.x, e.y) > (e.id === b.targetId ? radius + 3 : radius)) continue;
     if (e.mtMon && e.mtMon.capturing) continue;
     const m = petOk ? mult(mt, pet, e) : 1;
     const ttk = ehp(e) / (myD * m);
-    let s = -ttk;
-    if (e.kind === 'champion') s += 2 + 3 * b.pers.aggression;   // a downed trainer takes its monster off the map
+    let s = -ttk * F;
+    if (e.kind === 'champion') s += (2 + 3 * b.pers.aggression) * F;   // a downed trainer takes its monster off the map
+    // difficulty (rules.js ASSIST.focusHuman): leave a HUMAN trainer mostly alone on Easy (go for its monster instead)
+    const fh = mt.rules ? mt.rules.focusHuman(u.team, e) : 1;
+    if (fh < 1) s -= (1 - fh) * (8 + 3 * b.pers.aggression);
     if (e.id === b.targetId) s += 1.5;
     const tw = enemyTowerAt(mt, u.team, e.x, e.y, 0.5);
     if (tw && !(e.hp / e.maxHp < 0.25 && c.fight.ratio > 2.2)) s -= 30;
-    s -= dist(src.x, src.y, e.x, e.y) * 0.4;
+    s -= dist(src.x, src.y, e.x, e.y) * (0.4 + 1.2 * (1 - F));
     if (s > bs) { bs = s; best = e; }
   }
   return best;
@@ -619,6 +637,7 @@ function pickDefendTarget(mt, u, c, s) {
     if (!e.alive || e.team !== 1 - u.team || (e.visible && e.visible[u.team] === false)) continue;
     if (!(e.kind === 'minion' || e.kind === 'champion' || e.mtMon)) continue;
     let sc = e.kind === 'minion' ? (e.subtype === 'siege' || e.subtype === 'super' ? 3 : 1) - e.hp / 400 : 4 - ehp(e) / 1500;
+    if (mt.rules && e.kind === 'champion') sc -= (1 - mt.rules.focusHuman(u.team, e)) * 6;
     sc -= dist(s.x, s.y, e.x, e.y) * 0.15;
     if (sc > bs) { bs = sc; best = e; }
   }
@@ -644,9 +663,10 @@ function siegeLane(mt, u, b, c, lane, mode) {
   const minsNear = alliedMinionsNear(mt, team, s.x, s.y, (mt.L.TOWER_CFG && mt.L.TOWER_CFG.backdoorRadius) || 10.5);
   const est = estimateFight(mt, team, s.x, s.y, TOWER_RANGE + 6, { allyExtra: 8 });
   const grouped = est.allies.filter((a) => a.kind === 'champion').length;
-  const protectedKind = (isTower && s.tier >= 2) || !isTower;
+  const noBackdoor = mt.rules && mt.rules.M.backdoor === false;   // QUICK mode: monsters hit every structure fully
+  const protectedKind = !noBackdoor && ((isTower && s.tier >= 2) || !isTower);
   const dmgOk = !protectedKind || minsNear >= 1 || (mode === 'END' && TM.adv.aliveTheirs === 0);
-  const tankOk = isTower && grouped >= 2 && c.hpP > 0.55 && (TM.adv.aliveTheirs <= 1 || s.hp < s.maxHp * 0.3);
+  const tankOk = isTower && grouped >= 2 && c.hpP > 0.55 && (TM.adv.aliveTheirs <= 1 || s.hp < s.maxHp * 0.3 || (noBackdoor && est.ratio > 1.4));
   const canHit = !s.invulnerable && dmgOk && (!isTower || minsUnder >= 1 || tankOk);
   return { s, L, invuln: s.invulnerable, mins: minsUnder, minsNear, est, grouped, canHit, ts: nx.ts, isTower };
 }
@@ -689,6 +709,7 @@ function scorePush(mt, u, b, c) {
   const d = dist(u.x, u.y, info.s.x, info.s.y);
   if (callLane) { uu = 0.66 + 0.08 * b.pers.aggression; why = `team call: ${call.why} → ${lane} ${info.s.kind}`; }
   else if (info.canHit && info.mins >= 2 && d < 30) { uu = 0.58 + 0.1 * b.pers.aggression; why = `${info.mins} minions tanking ${lane} ${info.s.kind}${info.s.tier ? ' T' + info.s.tier : ''} (${Math.round(info.s.hp / info.s.maxHp * 100)} %)`; }
+  else if (info.canHit && mt.rules && mt.rules.M.backdoor === false && info.grouped >= 2 && d < 30) { uu = 0.56 + 0.1 * b.pers.aggression; why = `group siege on ${lane} ${info.s.kind}${info.s.tier ? ' T' + info.s.tier : ''} (${info.grouped} of us, ${Math.round(info.s.hp / info.s.maxHp * 100)} %)`; }
   if (!uu) return null;
   return { u: uu, why: 'PUSH: ' + why, run: () => runSiege(mt, u, b, c, lane, info) };
 }
@@ -739,7 +760,7 @@ function pickCamp(mt, u, b, c) {
     if (lvl > c.lvl + 1 + (c.rec && FORMS[c.rec.form].stage ? 2 : 0)) continue;
     const d = dist(u.x, u.y, st.camp.x, st.camp.y);
     if (d > 48) continue;
-    if (units[0].mtMon.meadow && c.lvl > 3) continue;
+    if (units[0].mtMon.meadow && (c.lvl > 3 || meadowForHuman(mt, team, cid))) continue;
     let contested = 0;
     for (const e of w.queryUnits(st.camp.x, st.camp.y, 14, null, mt._aiScan8 || (mt._aiScan8 = []))) if (e.alive && e.team === 1 - team && (e.kind === 'champion' || (e.mtMon && e.mtMon.ownerId >= 0)) && !(e.visible && e.visible[team] === false)) contested++;
     if (contested) continue;
@@ -750,6 +771,18 @@ function pickCamp(mt, u, b, c) {
     if (!best || s > best.s) best = { s, cid, st, units, xp, lvl };
   }
   return best;
+}
+
+/** the starter meadow nearest a team-mate HUMAN with a free party slot (first 2 minutes): bots leave it to them */
+function meadowForHuman(mt, team, cid) {
+  const w = mt.world; if (w.time >= 120) return false;
+  for (const h of w.champions) {
+    if (h.team !== team || h.bot || !h.mtTrainer || h.mtTrainer.party.length >= TRAINER.maxParty) continue;
+    let bc = null, bd = 1e9;
+    for (const [id, st] of w.campState) if (st.camp.mtMeadow) { const d = dist(h.x, h.y, st.camp.x, st.camp.y); if (d < bd) { bd = d; bc = id; } }
+    if (bc === cid) return true;
+  }
+  return false;
 }
 
 function scoreJungle(mt, u, b, c) {
@@ -844,7 +877,7 @@ function micro(mt, u, b) {
     }
   }
   // kite: an enemy monster/trainer is attacking ME -> step back toward safety (the monster keeps fighting)
-  if (t >= (b.kiteUntil || 0) + 0.4 && b.goal !== 'DEAD') {
+  if (t >= (b.kiteUntil || 0) + 0.4 && t >= (b.kiteSkipUntil || 0) && b.goal !== 'DEAD') {
     let att = null, ad = 7.5;
     for (const e of w.queryUnits(u.x, u.y, 7.5, null, mt._aiScanK || (mt._aiScanK = []))) {
       if (!e.alive || e.team !== 1 - u.team || !(e.mtMon || e.kind === 'champion')) continue;
@@ -853,7 +886,10 @@ function micro(mt, u, b) {
       const d = dist(u.x, u.y, e.x, e.y); if (d < ad) { ad = d; att = e; }
     }
     const tough = b.goal === 'FIGHT' && u.hp / u.maxHp > 0.7 && b.pers.aggression > 0.6;
-    if (att && !tough && (att.mtMon || u.hp / u.maxHp < 0.8)) {
+    // difficulty: a sloppier bot misses most kite opportunities (and does not re-check for a moment)
+    const misses = att && !tough && b.skill && b.skill.kite < 1 && rand01(w, u.id, 0x4b17) > b.skill.kite;
+    if (misses) b.kiteSkipUntil = t + 1.2;
+    else if (att && !tough && (att.mtMon || u.hp / u.maxHp < 0.8)) {
       const fo = fountainOf(u.team);
       const ax = u.x - att.x, ay = u.y - att.y, al = Math.hypot(ax, ay) || 1;
       const fx = fo.x - u.x, fy = fo.y - u.y, fl = Math.hypot(fx, fy) || 1;
@@ -867,6 +903,11 @@ function micro(mt, u, b) {
   // dodge telegraphed AoE (boss Gale Burst, enemy Flame Pillar): trainer steps out, a hurt monster is pulled back
   for (const g of mt.trainerBot.tele || []) {
     if (g.team === u.team || g.until - t < 0.1) continue;
+    if (b.skill && b.skill.kite < 1) {   // difficulty: each telegraph is noticed (or not) once
+      const dec = g.dec || (g.dec = {});
+      if (dec[u.id] === undefined) dec[u.id] = rand01(w, u.id, 0x4b18) <= b.skill.kite;
+      if (!dec[u.id]) continue;
+    }
     const du = dist(u.x, u.y, g.x, g.y);
     if (du < g.r + 0.6) {
       const p = du > 0.2 ? toward(g, { x: u.x, y: u.y }, g.r + 1.6) : { x: g.x + g.r + 1.6, y: g.y };
@@ -881,7 +922,7 @@ function micro(mt, u, b) {
   }
   // tower dance: our monster is the tower's target and getting low -> pull it back so the tower retargets
   const pet = monsters.activeUnit(mt, u);
-  if (pet && pet.alive && pet.lastHitTime > t - 0.5 && pet.hp / pet.maxHp < 0.5) {
+  if (pet && pet.alive && pet.lastHitTime > t - 0.5 && pet.hp / pet.maxHp < 0.5 && !(b.skill && b.skill.kite < 0.5)) {
     const src = w.units.get(pet.lastDamagedBy);
     if (src && src.kind === 'tower' && src.targetId === pet.id && src.team !== u.team) {
       petRelease(mt, u, pet);

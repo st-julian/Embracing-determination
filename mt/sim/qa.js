@@ -22,6 +22,7 @@ import { evolveReady } from './progression.js';
 import * as monsters from './monsters.js';
 import { hasAbility } from './combat.js';
 import { i as FOUNTAINS, a as LANES } from '../../assets/map-oE9sOnNc.js';
+import { guideFor } from './guide.js';
 
 const finite = Number.isFinite;
 
@@ -200,7 +201,7 @@ export function makeQA(mt, D) {
       if (w.tickNo % 30 === 0) for (const c of w.champions) {
         const T = c.mtTrainer; if (!T || !c.alive || c.statsDirty) continue;
         const avg = T.party.length ? T.party.reduce((a, r) => a + r.level, 0) / T.party.length : 0;
-        const want = (TRAINER.hp + TRAINER.hpPerAvgLevel * avg) * (T.spec === 'healing' ? 1 + SPECS.healing.passive.trainerHp : 1);
+        const want = (TRAINER.hp + TRAINER.hpPerAvgLevel * avg) * (T.spec === 'healing' ? 1 + SPECS.healing.passive.trainerHp : 1) * (mt.rules ? mt.rules.hpMult(c) : 1);
         // party levels can change in a postTick hook that runs after trainers' upkeep: only flag a mismatch that persists
         const mis = Math.abs(c.maxHp - want) > 1 && !c.buffs.some((b) => b.stats && (b.stats.maxHpBonus || b.stats.hp));
         const prev = (A.hpMis || (A.hpMis = {}))[c.id];
@@ -211,10 +212,10 @@ export function makeQA(mt, D) {
     mt.on('kill', (mt, victim) => {
       if (victim.mtTrainer) {
         const avg = victim.mtTrainer.party.length ? victim.mtTrainer.party.reduce((a, r) => a + r.level, 0) / victim.mtTrainer.party.length : 0;
-        const want = Math.min(TRAINER.respawn.max, TRAINER.respawn.base + TRAINER.respawn.perAvgLevel * avg);
+        const want = Math.min(TRAINER.respawn.max, TRAINER.respawn.base + TRAINER.respawn.perAvgLevel * avg) * (mt.rules ? mt.rules.respawnMult(victim) : 1);
         if (!near(victim.respawnAt - w.time, want, 0.1)) bad('trainer_respawn', { got: +(victim.respawnAt - w.time).toFixed(2), want: +want.toFixed(2) }); else ok('trainer_respawn');
       } else if (victim.mtMon && victim.mtMon.ownerId >= 0 && victim.mtMon.rec) {
-        const r = victim.mtMon.rec, want = FAINT.base + FAINT.perLevel * r.level;
+        const r = victim.mtMon.rec, want = (FAINT.base + FAINT.perLevel * r.level) * (mt.rules ? mt.rules.faintMult() : 1);
         if (!near(r.faintUntil - w.time, want, 0.1)) bad('faint_timer', { got: +(r.faintUntil - w.time).toFixed(2), want: +want.toFixed(2), level: r.level }); else ok('faint_timer');
       }
     });
@@ -241,7 +242,157 @@ export function makeQA(mt, D) {
     return mt._qaAudit;
   }
 
-  return { run, newAcc, countEvents, invariants, stateHash, fuzz, audit, human: (t, opts) => startHuman(mt, D, U(t), opts) };
+  // ------------------------------------------------------------------------------------------ pacing (gameplay owner)
+  /**
+   * Pacing tracker (docs/BALANCE.md "Pacing"): per trainer, from now on —
+   *   firstFight  first damage the trainer's MONSTER deals to a non-structure hostile (enemy minion / trainer / monster
+   *               or a wild monster), s of match time (firstHit: same incl. the trainer's sling);
+   *   firstPvp    first damage the trainer or its monster deals to an enemy trainer/monster;
+   *   walkNoEnemy share of ALIVE time spent moving with no ENEMY-team trainer / monster / minion within `radius` (10 m)
+   *               — "walking with nothing to do" (walkQuiet: wild monsters count as company too; quiet: moving or not);
+   *   deaths, plus match length and trainer deaths per minute over every trainer.
+   * Installs once per world (a second call returns the same tracker). report() is JSON-safe.
+   */
+  function pacing(opts = {}) {
+    if (mt._qaPacing) return mt._qaPacing;
+    const R = opts.radius || 10, R2 = R * R;
+    const P = new Map();   // trainer id -> stats
+    const rec = (c) => { let s = P.get(c.id); if (!s) P.set(c.id, (s = { id: c.id, name: c.name, team: c.team, bot: !!c.bot, alive: 0, walk: 0, walkQuiet: 0, walkNoEnemy: 0, quiet: 0, firstHit: null, firstFight: null, firstPvp: null, deaths: 0, lx: c.x, ly: c.y })); return s; };
+    const hostileTo = (team) => (o) => o.alive && !o.removed && o.team !== team && (o.kind === KIND.CHAMPION || o.kind === KIND.MINION || o.kind === KIND.MONSTER) &&
+      !(o.mtMon && o.mtMon.capturing) && (o.team !== TEAM.NEUTRAL || !!o.mtMon || !!o.epic);
+    const t0 = w.time;
+    mt.on('postTick', () => {
+      for (const c of w.champions) {
+        if (!c.mtTrainer) continue;
+        const s = rec(c);
+        s.bot = !!c.bot;
+        if (!c.alive) { s.lx = c.x; s.ly = c.y; continue; }
+        s.alive++;
+        const moved = (c.x - s.lx) * (c.x - s.lx) + (c.y - s.ly) * (c.y - s.ly) > 0.0004;   // > 2 cm this tick
+        s.lx = c.x; s.ly = c.y;
+        let near = false, enemy = false;
+        const f = hostileTo(c.team);
+        for (const o of w.unitList) {   // no grid query: strictly read-only
+          if ((o.x - c.x) * (o.x - c.x) + (o.y - c.y) * (o.y - c.y) > R2 || !f(o)) continue;
+          near = true; if (o.team !== TEAM.NEUTRAL) { enemy = true; break; }
+        }
+        if (moved) { s.walk++; if (!near) s.walkQuiet++; if (!enemy) s.walkNoEnemy++; }
+        if (!near) s.quiet++;
+      }
+    });
+    mt.on('damage', (mt, src, tgt, amount) => {
+      if (!src || !tgt || !(amount > 0) || mt.L.isStructure(tgt)) return;
+      const tr = src.mtTrainer ? src : src.mtMon && src.mtMon.ownerId >= 0 ? w.units.get(src.mtMon.ownerId) : null;
+      if (tr && tr.mtTrainer && tgt.team !== tr.team && hostileTo(tr.team)(tgt)) {
+        const s = rec(tr);
+        if (s.firstHit == null) s.firstHit = +(w.time - t0).toFixed(1);
+        if (s.firstFight == null && src !== tr) s.firstFight = +(w.time - t0).toFixed(1);   // a real fight = the MONSTER battles
+        if (s.firstPvp == null && tgt.team !== TEAM.NEUTRAL && (tgt.mtTrainer || (tgt.mtMon && tgt.mtMon.ownerId >= 0))) s.firstPvp = +(w.time - t0).toFixed(1);
+      }
+    });
+    mt.on('kill', (mt, victim) => { if (victim && victim.mtTrainer) rec(victim).deaths++; });
+    const pct = (a, b) => (b > 0 ? +(100 * a / b).toFixed(1) : 0);
+    mt._qaPacing = {
+      report() {
+        const min = Math.max(1e-6, (w.time - t0) / 60);
+        const list = [...P.values()].map((s) => ({ id: s.id, name: s.name, team: s.team, bot: s.bot, firstHit: s.firstHit, firstFight: s.firstFight, firstPvp: s.firstPvp,
+          walkNoEnemyPct: pct(s.walkNoEnemy, s.alive), walkQuietPct: pct(s.walkQuiet, s.alive), walkPct: pct(s.walk, s.alive), quietPct: pct(s.quiet, s.alive), deaths: s.deaths }));
+        const avg = (k, l = list) => { const v = l.map((x) => x[k]).filter((x) => x != null); return v.length ? +(v.reduce((a, b) => a + b, 0) / v.length).toFixed(1) : null; };
+        const deaths = list.reduce((a, s) => a + s.deaths, 0);
+        const humans = list.filter((s) => !s.bot);
+        return { matchMin: +min.toFixed(2), trainerDeaths: deaths, deathsPerMin: +(deaths / min).toFixed(2),
+          all: { firstHit: avg('firstHit'), firstFight: avg('firstFight'), firstPvp: avg('firstPvp'), walkNoEnemyPct: avg('walkNoEnemyPct'), walkQuietPct: avg('walkQuietPct'), quietPct: avg('quietPct') },
+          humans: humans.length ? { firstHit: avg('firstHit', humans), firstFight: avg('firstFight', humans), firstPvp: avg('firstPvp', humans), walkNoEnemyPct: avg('walkNoEnemyPct', humans), walkQuietPct: avg('walkQuietPct', humans), quietPct: avg('quietPct', humans), deathsPerMin: +(humans.reduce((a, s) => a + s.deaths, 0) / humans.length / min).toFixed(2) } : null,
+          trainers: list };
+      },
+    };
+    return mt._qaPacing;
+  }
+
+  return { run, newAcc, countEvents, invariants, stateHash, fuzz, audit, pacing, human: (t, opts) => startHuman(mt, D, U(t), opts), masher: (t) => startMasher(mt, U(t)) };
+}
+
+// ============================================================================================= casual "masher" (gameplay owner)
+/**
+ * A first-time casual touch player (docs/PLAYTEST.md #4): every 0.5 s — EVOLVE as soon as the button lights up (for the
+ * active or the benched monster); throw
+ * the orb when the guide says catch and the target is weak (< 40 % HP) within 9.5 m; mash ATTACK + the move buttons on the
+ * nearest enemy trainer / monster / minion within 7.5 m (on a wild one / the pushed tower only when the guide points at
+ * it), potion when the monster is under 35 %; otherwise walk (joystick `dir`) toward the guide's target, else the nearest
+ * enemy structure. Never recalls, swaps or uses the trainer skill. Only world.command, pure function of sim state.
+ * report(): {deaths, kills, assists, monKOs, captures, firstCatch, evolves, firstEvolve, throws, ...}.
+ */
+function startMasher(mt, me) {
+  const w = mt.world;
+  if (!me || !me.mtTrainer) throw new Error('qa.masher: not a trainer');
+  me.bot = false;
+  const C = { deaths: 0, monKOs: 0, captures: 0, firstCatch: null, evolves: 0, firstEvolve: null, throws: 0, casts: 0, potions: 0, evolveCmds: 0, guide: {} };
+  const cmd = (c) => w.command(me.id, c);
+  const STRUCT = new Set([KIND.TOWER, KIND.INHIBITOR, KIND.NEXUS]);
+  C.deathBy = {};
+  mt.on('kill', (mt, victim, killer) => {
+    if (victim !== me) return;
+    C.deaths++;
+    const k = !killer ? 'other' : killer.kind === KIND.TOWER ? 'tower' : killer.kind === KIND.MINION ? 'minion' : killer.mtMon ? (killer.mtMon.ownerId >= 0 ? 'monster' : 'wild') : killer.mtTrainer ? 'trainer' : killer.kind || 'other';
+    C.deathBy[k] = (C.deathBy[k] || 0) + 1;
+  });
+  mt.on('postTick', () => {
+    for (const e of w.events) {
+      if (e.type === 'mt_capture_success' && e.trainer === me.id) { C.captures++; if (C.firstCatch == null) C.firstCatch = +w.time.toFixed(1); }
+      else if (e.type === 'mt_evolve' && e.trainer === me.id) { C.evolves++; if (C.firstEvolve == null) C.firstEvolve = +w.time.toFixed(1); }
+      else if (e.type === 'mt_faint' && e.trainer !== me.id && e.killer >= 0) {
+        const k = w.units.get(e.killer);
+        if (k && (k === me || (k.mtMon && k.mtMon.ownerId === me.id))) C.monKOs++;
+      }
+    }
+  });
+  mt.on('preTick', () => {
+    if ((w.tickNo + me.id) % 15 !== 0 || !me.alive) return;
+    mt.guard('qa-masher', () => {
+      const T = me.mtTrainer, rec = T.activeIdx >= 0 ? T.party[T.activeIdx] : null;
+      const pet = rec && rec.unitId >= 0 ? w.units.get(rec.unitId) : null, petUp = !!(pet && pet.alive && !pet.removed);
+      if (petUp && pet.mtMon.evolving) return;
+      const g = guideFor(w, me.id);
+      if (g) C.guide[g.id] = (C.guide[g.id] || 0) + 0.5;
+      // EVOLVE lights up -> tap it (the active monster, else the benched one: the same button evolves it in its orb)
+      const bench = T.party.find((r, i) => i !== T.activeIdx && !r.fainted && !r.evolving && evolveReady(r));
+      if ((petUp && rec && evolveReady(rec)) || (bench && !(rec && rec.evolving))) { C.evolveCmds++; if (cmd({ type: 'evolve' })) return; }
+      // catch on cue
+      const gt = g && g.targetId >= 0 ? w.units.get(g.targetId) : null;
+      if (g && g.id === 'catch' && gt && isCapturable(gt) && (g.now || gt.hp / gt.maxHp < 0.4) && dist(me.x, me.y, gt.x, gt.y) < 9.5 && w.time >= T.cdEnd.capture) {
+        cmd({ type: 'dir', dx: 0, dy: 0 }); if (cmd({ type: 'capture', targetId: gt.id, confirm: true })) { C.throws++; return; }
+      }
+      // what is near
+      let enemy = null, ed = 7.5, wild = null, wd = 7, tower = null, td = 9;
+      for (const o of w.unitList) {
+        if (!o.alive || o.removed || o === me || o === pet) continue;
+        const d = dist(me.x, me.y, o.x, o.y); if (d > 12) continue;
+        if (o.team === TEAM.NEUTRAL) { if (o.mtMon && !o.mtMon.capturing && d < wd) { wd = d; wild = o; } continue; }
+        if (o.team === me.team) continue;
+        if (STRUCT.has(o.kind)) { if (d < td) { td = d; tower = o; } continue; }
+        if ((o.kind === KIND.CHAMPION || o.kind === KIND.MINION || o.kind === KIND.MONSTER) && !(o.visible && o.visible[me.team] === false) && d < ed) { ed = d; enemy = o; }
+      }
+      const tg = enemy || (wild && g && g.id === 'catch' ? wild : null) || (tower && g && g.id === 'push' ? tower : null);
+      if (tg) {
+        cmd({ type: 'dir', dx: 0, dy: 0 });
+        if (!cmd({ type: 'monsterAttack', targetId: tg.id })) cmd({ type: 'attack', targetId: tg.id });   // touch ATTACK: the monster, else the sling
+        if (rec && petUp) for (const s of ['a1', 'a2']) if ((rec.cds[s] || 0) <= w.time && hasAbility(rec, s) && cmd({ type: 'monsterCast', slot: s, targetId: tg.id, x: tg.x, y: tg.y })) { C.casts++; break; }
+        if (petUp && pet.hp / pet.maxHp < 0.35 && w.time >= T.cdEnd.potion && cmd({ type: 'potion' })) C.potions++;
+        return;
+      }
+      let tx = null, ty = null;
+      if (g && g.id !== 'respawn') { tx = g.x; ty = g.y; }
+      else {
+        let bd = 1e9;
+        for (const s of w.structures) { if (!s.alive || s.team === me.team || s.team === TEAM.NEUTRAL) continue; const d = dist(me.x, me.y, s.x, s.y); if (d < bd) { bd = d; tx = s.x; ty = s.y; } }
+      }
+      if (tx != null) { const dx = tx - me.x, dy = ty - me.y, d = Math.hypot(dx, dy); cmd(d > 2.5 ? { type: 'dir', dx: dx / d, dy: dy / d } : { type: 'dir', dx: 0, dy: 0 }); }
+    });
+  });
+  C.report = () => ({ trainer: me.id, team: me.team, won: w.winner === null ? null : w.winner === me.team, time: +w.time.toFixed(1), deaths: C.deaths, deathBy: { ...C.deathBy }, kills: me.kills || 0, assists: me.assists || 0, monKOs: C.monKOs,
+    captures: C.captures, firstCatch: C.firstCatch, evolves: C.evolves, firstEvolve: C.firstEvolve, throws: C.throws, casts: C.casts, potions: C.potions,
+    guide: Object.fromEntries(Object.entries(C.guide).map(([k, v]) => [k, +v.toFixed(1)])), party: me.mtTrainer.party.map((r) => r.form + r.level).join('/') });
+  return C;
 }
 
 // ============================================================================================= scripted human
@@ -258,7 +409,9 @@ function startHuman(mt, D, me, opts = {}) {
   me.bot = false;
   // play the lane the bots expect this slot to cover (legacy role -> lane), like a human following the team plan
   const ROLE_LANE = { baron: 'top', mid: 'mid', duo: 'bot' };
-  const O = { trainLevel: 2, trainUntil: 200, lane: ROLE_LANE[me.role] || 'mid', ...opts };
+  const R = mt.rules, roleLane = ROLE_LANE[me.role] || 'mid';
+  // QUICK mode has one lane (mid): the human plays it (rules.js)
+  const O = { trainLevel: 2, trainUntil: 200, lane: R && !R.laneActive(roleLane) ? R.lanes[0] : roleLane, ...opts };
   const team = me.team, enemy = 1 - team, fountain = FOUNTAINS[team];
   const C = {
     trainer: me.id, active: true, mode: null, stages: Object.fromEntries(STAGES.map((k) => [k, null])), timeline: [],
@@ -305,16 +458,19 @@ function startHuman(mt, D, me, opts = {}) {
 
   function observe() {
     const T = me.mtTrainer;
-    if (T.party.length) mark('capture', { form: T.party[0].form });
+    if (C.lv0 == null && T.party.length) C.lv0 = T.party[0].level;   // starting level (a starter begins above Lv 1)
+    // 'capture' = a real capture (starter monsters exist since the playtest pass; the starter itself is not a capture)
+    if (C.hadStarter == null && T.party.length) C.hadStarter = !!T.starter;
+    if (C.counters.captures > 0 || (T.party.length && !C.hadStarter)) mark('capture', { form: T.party[T.party.length - 1].form });
     if (T.party.length >= 2 && C.secondCapture == null) C.secondCapture = +w.time.toFixed(1);
     for (const r of T.party) {
       if (r.level > C.counters.maxLevel) C.counters.maxLevel = r.level;
-      if (r.level >= 2) mark('levelUp', { level: r.level, form: r.form });
+      if (r.level >= 2 && r.level > (C.lv0 || 1)) mark('levelUp', { level: r.level, form: r.form });
       if (FORMS[r.form] && FORMS[r.form].stage >= 1) mark('evolve', { form: r.form });
       if (r.unitId >= 0) C.petIds.add(r.unitId);
     }
     const rec = monsters.activeRecord(me);
-    if (C.stages.capture != null && rec && (rec.xp > 0 || rec.level > 1)) mark('train', { level: rec.level });
+    if ((C.stages.capture != null || C.hadStarter) && rec && (rec.xp > 0 || rec.level > Math.max(1, C.lv0 || 1))) mark('train', { level: rec.level });
     if (w.winner === team) mark('nexus');
   }
 
@@ -373,9 +529,10 @@ function startHuman(mt, D, me, opts = {}) {
     if (foes.length && (!pet || !pet.alive)) { moveTo(me.x + (fountain.x - me.x) * 0.25, me.y + (fountain.y - me.y) * 0.25, false); return; }
     // --- second monster (a human fills the bench once the first one can carry the fight): time-boxed 60 s
     if (T.party.length === 1 && rec && rec.level >= 4 && t < 600 && pet && pet.alive && pet.hp / pet.maxHp > 0.6 && hpF > 0.6 && !C.cap2Done) {
-      if (C.cap2Until == null) C.cap2Until = t + 60;
+      // time-boxed 60 s windows, up to 3 (90 s apart): a player who starts with a monster still fills the bench
+      if (C.cap2Until == null || (t > C.cap2Until + 90 && (C.cap2Tries || 0) < 3)) { C.cap2Until = t + 60; C.cap2Tries = (C.cap2Tries || 0) + 1; }
       if (t < C.cap2Until) { if (captureStep({ second: true, maxLevel: rec.level, pet })) return; }
-      else C.cap2Done = true;
+      else if ((C.cap2Tries || 0) >= 3) C.cap2Done = true;
     }
     if (T.party.length >= 2) C.cap2Done = true;
     // --- Train: fight wild monsters until trainLevel
@@ -519,7 +676,7 @@ function startHuman(mt, D, me, opts = {}) {
     const lost = w.winner !== null && w.winner !== team;
     const missing = STAGES.filter((k) => C.stages[k] == null && !((k === 'nexus' || k === 'tower') && lost));
     const S = C.stages, order = [];
-    for (const k of STAGES.slice(1)) if (S[k] != null && S.capture != null && S[k] < S.capture) order.push(k + ' before capture');
+    if (!C.hadStarter) for (const k of STAGES.slice(1)) if (S[k] != null && S.capture != null && S[k] < S.capture) order.push(k + ' before capture');
     if (S.evolve != null && S.levelUp != null && S.evolve < S.levelUp) order.push('evolve before levelUp');
     if (S.nexus != null && S.tower != null && S.nexus < S.tower) order.push('nexus before tower');
     return {

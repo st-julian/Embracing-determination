@@ -12,8 +12,8 @@
 // relays), so each page sees the same per-peer absolute state the claude.ai room delivers. Messages (JSON):
 //   guest -> host   {t:'hi', p:label, v:1, d:presence}   {t:'pr', d:patch}   {t:'ka'}   {t:'bye'}
 //   host  -> guest  {t:'snap', ps:[[label, presence]...]}   {t:'up', m:{label: patch}, lv:[label...]}   {t:'ka'}   {t:'bye'}
-// A patch is the room contract's: top-level keys replace, null removes. Coalesced to <= 30 sends/s from a guest and
-// <= 60/s relayed by the host;
+// A patch is the room contract's: top-level keys replace, null removes. Coalesced to <= 60 sends/s each way (the
+// lockstep publishes ~30/s; a short coalescing window keeps the added latency small);
 // keepalive 1 s; a connection silent for 20 s of THIS page's running time is gone (a closed tab closes its channel at
 // once; WebRTC's own consent checks end a dead one in ~30 s; a page busy loading a match must not be dropped — the
 // lockstep replaces a stuck player after 8 s on its own). Timeouts count running time, so a starved page (slow phone,
@@ -22,6 +22,11 @@
 //
 // No global discovery: PeerJS cannot list rooms, so the lobby room only holds this page (open games are shared by code /
 // link). No host migration: when the host leaves, the guests lose each other (a match continues on each page with bots).
+// Reconnect: a channel that closes WITHOUT 'bye' (iPad: the app went to the background, Wi-Fi hiccup) is not a
+// departure yet. The guest re-dials the host every 1.5 s (re-opening the signaling socket first if it dropped; at
+// once when the page becomes visible again: wake()) and says {t:'hi', re:1} with its label; the host keeps that
+// member's presence meanwhile and swaps the new channel in. Gone for good after 20 s — by then the lockstep has
+// handed the trainer to a bot anyway (8 s, or 20 s after the peer said it went to another app).
 // ICE: public STUN only (Google). There is no TURN relay, so two strict NATs (some mobile carriers) may fail to connect.
 //
 // The PeerJS client (MIT) is vendored in ./vendor/peerjs.min.js and loaded on first use (never from a CDN).
@@ -33,7 +38,8 @@ export const PEER_PREFIX = 'sundered-vale-';
 export const ICE_SERVERS = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
 const LABEL_RE = /^[a-z0-9]{8,32}$/;
 const LABEL_ABC = 'abcdefghjkmnpqrstuvwxyz23456789';
-const MAX_MSG = 24000, FLUSH_MS = 33, RELAY_MS = 16, KA_MS = 1000, DEAD_MS = 20000, HELLO_MS = 20000, JOIN_MS = 25000, MAX_GUESTS = 11;
+const MAX_MSG = 24000, FLUSH_MS = 16, RELAY_MS = 16, KA_MS = 1000, DEAD_MS = 20000, HELLO_MS = 20000, JOIN_MS = 25000, MAX_GUESTS = 11;
+const RECONNECT_MS = 20000, REDIAL_MS = 1500, STALE_MS = 3000;   // a dropped channel (iPad app switch) may come back
 
 const err = (code, message) => Object.assign(new Error(message || code), { code });
 export function randLabel(n = 16) {
@@ -126,6 +132,8 @@ export class PeerNet {
     return r;
   }
   close() { for (const r of this.rooms.values()) r.leave(); this.rooms.clear(); }
+  /** the page is visible again: re-open dropped signaling / channels now instead of at the next retry */
+  wake() { for (const r of this.rooms.values()) r.wake(); }
 }
 
 /** One game room: the host's star (host side or guest side) */
@@ -138,7 +146,8 @@ export class PeerRoom {
     this.snap = null; this.listeners = new Set(); this.closed = false; this.joinedOk = false;
     this.out = new Map(); this.lv = []; this.flushH = null; this.lastFlush = -1e9;   // host: label -> merged patch to relay
     this.pend = null;                                                               // guest: my merged unsent patch
-    this.conn = null; this.hostSilent = 0; this.sentAt = new Map(); this.lastAt = new Map(); this.reconnects = 0;
+    this.conn = null; this.hostSilent = 0; this.sentAt = new Map(); this.rq = new Map(); this.reconnects = 0;
+    this.redial = null; this.closingOld = new WeakSet(); this.reconnectCount = 0;   // guest re-dial state; host: replaced channels
     this.aliveMs = 0; this.lastTickAt = this.clock.now();   // running time (a starved page's timers fire late: capped steps)
     this.ready = new Promise((res, rej) => { this._res = res; this._rej = rej; });
     this.ready.catch(() => {});
@@ -179,6 +188,18 @@ export class PeerRoom {
   }
   emit() { return Promise.resolve(); }
   on() { return () => {}; }
+  /** send what is pending NOW (the page is about to be frozen: iPad app switch) */
+  flushNow() { if (this.flushH != null) { this.clock.clearTimeout(this.flushH); this.flushH = null; } this._flush(); }
+  /** visible again (see PeerNet.wake) */
+  wake() {
+    if (this.closed || !this.peer) return;
+    this.reconnects = 0;
+    try { if (this.peer.disconnected && !this.peer.destroyed) this.peer.reconnect(); } catch { /* retried by _signalLost */ }
+    if (!this.isHost && this.joinedOk && !this.hostLost) {
+      if (this.redial) this._redial(true);
+      else if (this.hostSilent > STALE_MS) this._lost();   // the channel may be dead without a close event (suspended app)
+    }
+  }
   leave() {
     if (this.closed) return Promise.resolve();
     this.closed = true;
@@ -230,12 +251,16 @@ export class PeerRoom {
     if (this.isHost) {
       for (const [label, m] of this.members) {
         m.silent += step;
-        if (m.silent > DEAD_MS) { this._drop(label, 'silent'); continue; }
-        if (now - (this.sentAt.get(m.conn) || 0) > KA_MS) this._send(m.conn, { t: 'ka' });
+        if (m.silent > (m.lost ? RECONNECT_MS : DEAD_MS)) { this._drop(label, 'silent'); continue; }
+        if (!m.lost && now - (this.sentAt.get(m.conn) || 0) > KA_MS) this._send(m.conn, { t: 'ka' });
       }
+    } else if (this.redial) {
+      this.redial.ms += step;
+      if (this.redial.ms > RECONNECT_MS) { this._hostGone(); return; }
+      if (now >= this.redial.next) this._redial(false);
     } else if (this.conn && this.conn.open) {
       this.hostSilent += step;
-      if (this.hostSilent > DEAD_MS) { this._hostGone(); return; }
+      if (this.hostSilent > DEAD_MS) { this._lost(); return; }
       if (now - (this.sentAt.get(this.conn) || 0) > KA_MS) this._send(this.conn, { t: 'ka' });
     }
   }
@@ -243,14 +268,29 @@ export class PeerRoom {
     if (!conn || !conn.open) return false;
     try { conn.send(msg); this.sentAt.set(conn, this.clock.now()); return true; } catch { return false; }
   }
-  /** receive-side latency for tests: FIFO per connection */
+  /**
+   * receive-side latency for tests: strictly FIFO per connection, like the ordered channel underneath. ONE timer drains a
+   * per-connection queue in order — never a timer per message: browsers truncate a timeout to whole ms (WebIDL long),
+   * so two messages due within the same millisecond could fire in the wrong order, and a presence PATCH applied out of
+   * order leaves stale keys behind (the cause of the WebRTC net-test desync, netplay.md "Desync forensics").
+   */
   _recv(conn, fn) {
     const N = this.net.net;
     if (!N.lat && !N.jit) { fn(); return; }
     const now = this.clock.now();
-    const at = Math.max(now + Math.max(0, N.lat + (N.jit ? (Math.random() * 2 - 1) * N.jit : 0)), this.lastAt.get(conn) || 0);
-    this.lastAt.set(conn, at);
-    this.clock.setTimeout(fn, at - now);
+    let q = this.rq.get(conn); if (!q) this.rq.set(conn, (q = { list: [], h: null, last: 0 }));
+    const at = Math.max(now + Math.max(0, N.lat + (N.jit ? (Math.random() * 2 - 1) * N.jit : 0)), q.last);
+    q.last = at; q.list.push([at, fn]);
+    if (q.h == null) this._drain(q);
+  }
+  _drain(q) {
+    const wait = Math.max(0, Math.ceil(q.list[0][0] - this.clock.now()));
+    q.h = this.clock.setTimeout(() => {
+      q.h = null;
+      const now = this.clock.now();
+      while (q.list.length && q.list[0][0] <= now + 0.5) { const fn = q.list.shift()[1]; try { fn(); } catch (e) { console.error('[peer] recv', e); } }
+      if (q.list.length) this._drain(q);
+    }, wait);
   }
   _ok(m) { return m && typeof m === 'object' && !Array.isArray(m) && typeof m.t === 'string' && utf8Len(JSON.stringify(m)) <= MAX_MSG; }
   _changed() { this.snap = null; Promise.resolve().then(() => this._notify()); }
@@ -268,7 +308,7 @@ export class PeerRoom {
   }
   _schedule() {
     if (this.flushH != null || this.closed) return;
-    // guests send <= 30/s; the host relays at <= 60/s (guest -> guest is two legs: keep the hop short)
+    // <= 60 sends/s (guest -> guest is two legs: keep each hop's coalescing short)
     const wait = Math.max(0, this.lastFlush + (this.isHost ? RELAY_MS : FLUSH_MS) - this.clock.now());
     this.flushH = this.clock.setTimeout(() => { this.flushH = null; this._flush(); }, wait);
   }
@@ -276,18 +316,26 @@ export class PeerRoom {
     if (this.closed) return;
     this.lastFlush = this.clock.now();
     if (!this.isHost) {
-      if (this.pend && this.conn && this.conn.open) { this._send(this.conn, { t: 'pr', d: this.pend }); this.pend = null; }
+      if (this.pend && this.conn && this.conn.open) { if (this._send(this.conn, { t: 'pr', d: this.pend })) this.pend = null; else this._schedule(); }
       return;
     }
-    if (!this.out.size && !this.lv.length) return;
+    let retry = false;
+    for (const mem of this.members.values()) if (mem.retry) retry = true;
+    if (!this.out.size && !this.lv.length && !retry) return;
+    retry = false;
     for (const [label, mem] of this.members) {
-      const m = {};
-      let any = false;
-      for (const [who, p] of this.out) if (who !== label) { m[who] = p; any = true; }
-      const lv = this.lv.filter((x) => x !== label);
-      if (any || lv.length) this._send(mem.conn, lv.length ? { t: 'up', m, lv } : { t: 'up', m });
+      // a patch that could not be sent on an OPEN channel is merged into the next one for that member (never dropped:
+      // the receiver would keep stale keys); a closed channel is resynced whole by the snap when the guest re-dials
+      const R = mem.retry; mem.retry = null;
+      const m = R ? R.m : {}, lv = R ? R.lv : [];
+      let any = !!R && Object.keys(m).length > 0;
+      for (const [who, p] of this.out) if (who !== label) { m[who] = m[who] ? { ...m[who], ...p } : p; any = true; }
+      for (const x of this.lv) if (x !== label && !lv.includes(x)) lv.push(x);
+      if (!any && !lv.length) continue;
+      if (!this._send(mem.conn, lv.length ? { t: 'up', m, lv } : { t: 'up', m }) && mem.conn && mem.conn.open) { mem.retry = { m, lv }; retry = true; }
     }
     this.out.clear(); this.lv = [];
+    if (retry) this._schedule();
   }
   _queueOut(label, patch) {
     const cur = this.out.get(label) || {};
@@ -305,11 +353,13 @@ export class PeerRoom {
       const m = typeof raw === 'string' ? safeParse(raw) : raw;
       if (!this._ok(m)) return;
       if (!label) {
-        if (m.t !== 'hi' || typeof m.p !== 'string' || !LABEL_RE.test(m.p) || m.p === this.label || this.members.has(m.p)) { try { c.close(); } catch { /* */ } return; }
+        const back = m.re === 1 && typeof m.p === 'string' && this.members.has(m.p);   // a member re-dialing after a drop
+        if (m.t !== 'hi' || typeof m.p !== 'string' || !LABEL_RE.test(m.p) || m.p === this.label || (this.members.has(m.p) && !back)) { try { c.close(); } catch { /* */ } return; }
         const [pres, e] = mergePatch({}, m.d && typeof m.d === 'object' ? m.d : {});
         if (e) { try { c.close(); } catch { /* */ } return; }
         label = m.p; this.clock.clearTimeout(helloT);
-        this.members.set(label, { pres, conn: c, silent: 0, obj: null });
+        if (back) { const old = this.members.get(label).conn; if (old && old !== c) { this.closingOld.add(old); try { old.close(); } catch { /* */ } } }
+        this.members.set(label, { pres, conn: c, silent: 0, obj: null, lost: false });
         const ps = [[this.label, this.mine]]; for (const [l, x] of this.members) if (l !== label) ps.push([l, x.pres]);
         this._send(c, { t: 'snap', ps });
         this.out.set(label, { ...pres }); this._schedule();   // the newcomer, whole, to everyone else
@@ -325,7 +375,8 @@ export class PeerRoom {
         mem.pres = pres; mem.obj = null; this._queueOut(label, m.d); this._changed();
       } else if (m.t === 'bye') this._drop(label, 'left');
     }));
-    const gone = () => { if (label && this.members.get(label) && this.members.get(label).conn === c) this._drop(label, 'closed'); };
+    // closed without 'bye': keep the member (and its presence) — it may re-dial; _tick drops it after DEAD_MS
+    const gone = () => { const mem = label && this.members.get(label); if (mem && mem.conn === c && !this.closingOld.has(c)) mem.lost = true; };
     c.on('close', gone); c.on('error', gone);
   }
   _drop(label, why) {
@@ -336,12 +387,17 @@ export class PeerRoom {
     this._changed();
   }
   // ---------------------------------------------------------------- guest side
-  _connect() {
+  _connect(re = false) {
     let c;
-    try { c = this.peer.connect(this.hostId, { reliable: true, serialization: 'json', metadata: { sv: 1 } }); } catch (e) { this._fail(err('webrtc_failed', String(e && e.message || e))); return; }
-    if (!c) { this._fail(err('webrtc_failed', 'connect returned nothing')); return; }
+    try { c = this.peer.connect(this.hostId, { reliable: true, serialization: 'json', metadata: { sv: 1 } }); } catch (e) { if (re) return; this._fail(err('webrtc_failed', String(e && e.message || e))); return; }
+    if (!c) { if (!re) this._fail(err('webrtc_failed', 'connect returned nothing')); return; }
     this.conn = c;
-    c.on('open', () => { this.connOpened = true; this.hostSilent = 0; this._send(c, { t: 'hi', p: this.label, v: 1, d: this.mine }); this.pend = null; });
+    c.on('open', () => {
+      if (c !== this.conn) return;
+      this.connOpened = true; this.hostSilent = 0;
+      this._send(c, re ? { t: 'hi', p: this.label, v: 1, d: this.mine, re: 1 } : { t: 'hi', p: this.label, v: 1, d: this.mine });
+      this.pend = null;
+    });
     c.on('data', (raw) => this._recv(c, () => {
       if (this.closed || c !== this.conn) return;
       const m = typeof raw === 'string' ? safeParse(raw) : raw;
@@ -350,6 +406,7 @@ export class PeerRoom {
       if (m.t === 'snap' && Array.isArray(m.ps)) {
         this.members.clear();
         for (const e of m.ps) this._apply(e && e[0], e && e[1], true);
+        if (this.redial) { this.redial = null; this.reconnectCount++; }   // back in the star
         this._changed(); this._joined();
       } else if (m.t === 'up' && m.m && typeof m.m === 'object') {
         for (const l of Object.keys(m.m)) this._apply(l, m.m[l], false);
@@ -357,8 +414,27 @@ export class PeerRoom {
         this._changed();
       } else if (m.t === 'bye') this._hostGone();
     }));
-    c.on('close', () => { if (c === this.conn) this._hostGone(); });
-    c.on('error', (e) => { if (!this.joinedOk) this._fail(err('webrtc_failed', String(e && e.message || e))); });
+    c.on('close', () => { if (c === this.conn) this._lost(); });
+    c.on('error', (e) => { if (!this.joinedOk) this._fail(err('webrtc_failed', String(e && e.message || e))); else if (c === this.conn) this._lost(); });
+  }
+  /** the channel to the host closed / went silent without 'bye': keep everyone's presence, re-dial for a while */
+  _lost() {
+    if (!this.joinedOk) { this._hostGone(); return; }
+    if (this.hostLost || this.closed || this.redial) return;
+    const old = this.conn; this.conn = null;
+    if (old) { try { old.close(); } catch { /* */ } }
+    this.redial = { ms: 0, next: this.clock.now() + 200 };
+  }
+  _redial(now) {
+    const R = this.redial; if (!R || this.closed) return;
+    R.next = this.clock.now() + REDIAL_MS;
+    try {
+      if (this.peer.disconnected && !this.peer.destroyed) { this.peer.reconnect(); return; }   // signaling first; dial next round
+      if (!this.peer.open) return;
+      if (this.conn) { const c = this.conn; this.conn = null; try { c.close(); } catch { /* */ } }
+      this._connect(true);
+    } catch { /* next round */ }
+    void now;
   }
   _apply(label, patch, whole) {
     if (typeof label !== 'string' || !LABEL_RE.test(label) || label === this.label) return;
@@ -371,7 +447,9 @@ export class PeerRoom {
     // before the channel opened = WebRTC could not connect (NAT / firewall, no TURN); after = the host turned us away
     if (!this.joinedOk) { this._fail(this.connOpened ? err('not_found', 'host closed the connection') : err('webrtc_failed', 'no direct connection to the host')); return; }
     if (this.hostLost) return;
-    this.hostLost = true; this.conn = null;
+    this.hostLost = true; this.redial = null;
+    if (this.conn) { try { this.conn.close(); } catch { /* */ } }
+    this.conn = null;
     this.members.clear(); this._changed();   // star topology: without the host nobody else is reachable
   }
 }

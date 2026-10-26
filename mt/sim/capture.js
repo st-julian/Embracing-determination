@@ -62,13 +62,14 @@ export function isCapturable(u) {
 
 /**
  * Pure DESIGN §6 probability.
- * @param {{catchRate:number, hpFrac:number, status?:boolean, level?:number}} o
+ * @param {{catchRate:number, hpFrac:number, status?:boolean, level?:number, bonus?:number}} o   bonus = the human's
+ *        catch assist (rules.captureBonus), added before the clamp
  */
 export function captureProbability(o) {
   const hpTerm = Math.pow(Math.max(0, Math.min(1, 1 - o.hpFrac)), CAPTURE.hpExponent);
   const status = o.status ? CAPTURE.statusBonus : 0;
   const above = Math.max(0, (o.level || 1) - CAPTURE.levelPenaltyAbove);
-  const p = o.catchRate * (CAPTURE.floor + (1 - CAPTURE.floor) * hpTerm) + status - CAPTURE.levelPenalty * above;
+  const p = o.catchRate * (CAPTURE.floor + (1 - CAPTURE.floor) * hpTerm) + status - CAPTURE.levelPenalty * above + (o.bonus || 0);
   return Math.min(CAPTURE.pMax, Math.max(CAPTURE.pMin, p));
 }
 
@@ -81,14 +82,17 @@ export function hasCaptureStatus(u, now) {
   return t.slowUntil > now || t.rootUntil > now || t.stunUntil > now || t.airborneUntil > now;
 }
 
-/** DESIGN §6 probability for a live wild unit. */
-export function captureChance(u, now) {
+/** DESIGN §6 probability for a live wild unit; `bonus` = the thrower's catch assist (`mt.rules.captureBonus(trainer)`,
+ *  0 for bots / Hard — pass it to show the human the chance the throw will really roll). */
+export function captureChance(u, now, bonus = 0) {
   const line = LINES[FORMS[u.mtMon.form].line];
-  return captureProbability({ catchRate: line.catch, hpFrac: u.hp / u.maxHp, status: hasCaptureStatus(u, now), level: u.level || 1 });
+  return captureProbability({ catchRate: line.catch, hpFrac: u.hp / u.maxHp, status: hasCaptureStatus(u, now), level: u.level || 1, bonus });
 }
 
 /** HUD-friendly band for a chance. */
 export function chanceBand(p) { return p >= 0.6 ? 'great' : p >= 0.35 ? 'good' : 'ok'; }
+
+function bonusOf(mt, trainer) { return mt.rules && mt.rules.captureBonus ? mt.rules.captureBonus(trainer) : 0; }
 
 function deny(mt, trainer, code, text) { mt.emit(mt.E.DENY, { trainer: trainer.id, code, text }); return false; }
 
@@ -186,7 +190,7 @@ function miss(mt, trainer, targetId, x, y) {
 function absorb(mt, trainer, u) {
   const w = mt.world;
   if (!isCapturable(u)) { miss(mt, trainer, u ? u.id : -1, u ? u.x : trainer.x, u ? u.y : trainer.y); return; }
-  const p = captureChance(u, w.time);
+  const p = captureChance(u, w.time, bonusOf(mt, trainer));
   const M = u.mtMon;
   M.capturing = { trainer: trainer.id, team: trainer.team, p, phase: 'absorb', n: 0, t0: w.time, nextT: w.time + CAPTURE.absorbTime, x: u.x, y: u.y };
   u.mtCtl = true; u.invulnerable = true; u.untargetable = true; u.targetId = -1;
@@ -258,6 +262,6 @@ function hint(mt, src, tgt) {
   const H = tgt.mtMon.hinted || (tgt.mtMon.hinted = new Map());   // trainer id -> time (re-hint after 20 s)
   if (H.has(tr.id) && w.time - H.get(tr.id) < 20) return;
   H.set(tr.id, w.time);
-  const p = captureChance(tgt, w.time);
+  const p = captureChance(tgt, w.time, bonusOf(mt, tr));
   mt.emit(mt.E.CAPTURE_READY, { trainer: tr.id, team: tr.team, target: tgt.id, ...info(tgt), x: tgt.x, y: tgt.y, chance: +p.toFixed(2), band: chanceBand(p) });
 }

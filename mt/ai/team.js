@@ -9,6 +9,14 @@ import { LANE_IDS, progressOf, pointAtTeam, nearestLane, BOSS_PIT, laneLen } fro
 import { minionsUnder, estimateFight, TOWER_RANGE, dps, ehp } from './assess.js';
 
 const ROLE_LANE = { baron: 'top', mid: 'mid', duo: 'bot', support: 'bot', jungle: 'mid' };
+/** lanes with waves + structures this match (QUICK mode: mid only — mt/sim/rules.js) */
+export const lanesOf = (mt) => (mt.rules ? mt.rules.lanes : LANE_IDS);
+const laneOk = (mt, l) => lanesOf(mt).includes(l);
+/** team-level bot skill (difficulty): the profile of this team's bots (mt/data/options.js BOT_SKILL) */
+function teamSkill(mt, team) {
+  const c = mt.world.champions.find((x) => x.team === team && x.mtTrainer && x.bot);
+  return c && mt.rules ? mt.rules.botSkill(c) : null;
+}
 
 export function makeTeam(team) {
   return {
@@ -94,14 +102,16 @@ function updateLanes(mt, TM, brains) {
     if (nl.d < 9) { const { ts } = progressOf(team, nl.lane, e.x, e.y); if (ts > 25 && ts < laneLen(nl.lane) - 25) TM.enemyLane.set(e.id, nl.lane); }
   }
   // initial / human lanes
+  const lanes = lanesOf(mt);
   for (const c of mates) {
-    if (!TM.lanes.has(c.id)) TM.lanes.set(c.id, ROLE_LANE[c.role] || 'mid');
-    if (!c.bot && c.alive) { const nl = nearestLane(c.x, c.y); if (nl.d < 10) TM.lanes.set(c.id, nl.lane); }
+    if (!TM.lanes.has(c.id) || !laneOk(mt, TM.lanes.get(c.id))) TM.lanes.set(c.id, laneOk(mt, ROLE_LANE[c.role]) ? ROLE_LANE[c.role] : lanes.includes('mid') ? 'mid' : lanes[0]);
+    if (!c.bot && c.alive) { const nl = nearestLane(c.x, c.y); if (nl.d < 10 && laneOk(mt, nl.lane)) TM.lanes.set(c.id, nl.lane); }
   }
   const bots = mates.filter((c) => c.bot && brains.has(c.id));
   if (!bots.length) return;
+  if (lanes.length === 1) { for (const b of bots) TM.lanes.set(b.id, lanes[0]); return; }   // QUICK: everyone plays mid
   const humanLanes = new Set(mates.filter((c) => !c.bot).map((c) => TM.lanes.get(c.id)));
-  const free = LANE_IDS.filter((l) => !humanLanes.has(l));
+  const free = lanes.filter((l) => !humanLanes.has(l));
   while (free.length < bots.length) free.push('mid');
   if (t < TM.nextLaneEval) {
     // repair: two bots on one lane while a lane is empty (e.g. a human moved lanes)
@@ -173,9 +183,11 @@ function computeAdvantage(mt, TM) {
 function updateCalls(mt, TM, brains) {
   const w = mt.world, team = TM.team, t = w.time, A = computeAdvantage(mt, TM);
   const prev = TM.call;
+  const LANES = lanesOf(mt);
+  const S = teamSkill(mt, team), obj = (S ? S.objective : 1) / (mt.rules ? mt.rules.M.aiTime : 1);   // difficulty: objective greed (< 1 = later, more cautious) / QUICK: shorter match (push calls earlier)
   let call = null;
   // DEFEND: base / inner structures under siege outrank everything
-  for (const lane of LANE_IDS) {
+  for (const lane of LANES) {
     const L = laneState(mt, TM, lane);
     if (!L.siege) continue;
     const prio = L.siege.order >= 4 ? 3 : L.siege.order >= 2 ? 2 : 1;
@@ -187,7 +199,7 @@ function updateCalls(mt, TM, brains) {
   const endKeep = prev && prev.kind === 'end' && A.aliveMine >= 2 && A.alive >= -1;
   if (!call && (A.enemyInhibDown || A.enemyBaseOpen) && ((A.alive >= 0 && A.aliveMine >= 2) || endKeep)) {
     let lane = null, bestN = 99;
-    for (const l of LANE_IDS) { const L = laneState(mt, TM, l); if (!L.enemyNext) continue; const n = L.enemyNext.order; if (L.theirs.some((e) => e.s.kind === 'inhibitor' && !e.s.alive)) { lane = l; break; } if (6 - n < bestN) { bestN = 6 - n; lane = l; } }
+    for (const l of LANES) { const L = laneState(mt, TM, l); if (!L.enemyNext) continue; const n = L.enemyNext.order; if (L.theirs.some((e) => e.s.kind === 'inhibitor' && !e.s.alive)) { lane = l; break; } if (6 - n < bestN) { bestN = 6 - n; lane = l; } }
     if (endKeep && prev.lane && laneState(mt, TM, prev.lane).enemyNext) lane = prev.lane;
     if (lane) call = { kind: 'end', lane, why: 'enemy base open: group and end' };
   }
@@ -209,7 +221,8 @@ function updateCalls(mt, TM, brains) {
       tDps += dps(mt, p); tEhp += ehp(p); n++;
     }
     const ttk = bossEhp / Math.max(1, tDps), tSurv = tEhp / bossDps;
-    const feasible = n >= 2 && ttk < 50 && ttk < tSurv * 0.75;
+    const og = S ? S.objective : 1;
+    const feasible = n >= 2 && ttk < 50 * og && ttk < tSurv * 0.75 * og;
     const committed = prev && prev.kind === 'objective' && onIt >= 1 && boss.hp < boss.maxHp * 0.7 && A.alive >= 0;
     if ((ahead && feasible && A.aliveMine >= 2 && enemiesNear <= A.aliveMine - 1) || committed) {
       call = { kind: 'objective', x: boss.x, y: boss.y, bossId: boss.id, ttk: Math.round(ttk),
@@ -218,9 +231,9 @@ function updateCalls(mt, TM, brains) {
   }
   // PUSH: numbers advantage mid/late game, or late-game grouping to force the end
   const pushKeep = prev && prev.kind === 'push' && t - prev.since < 75 && A.alive >= 0 && A.aliveMine >= 2;
-  if (!call && ((t >= 480 && A.alive >= 2) || (t >= 600 && A.alive >= 1 && A.level >= -0.5) || (t >= 960 && A.alive >= 0 && A.aliveMine >= 2) || pushKeep)) {
+  if (!call && ((t >= 480 / obj && A.alive >= 2) || (t >= 600 / obj && A.alive >= 1 && A.level >= -0.5) || (t >= 960 / obj && A.alive >= 0 && A.aliveMine >= 2) || pushKeep)) {
     let lane = null, bestOrder = -1, bestMins = -1;
-    for (const l of LANE_IDS) {
+    for (const l of LANES) {
       const L = laneState(mt, TM, l); if (!L.enemyNext) continue;
       if (L.enemyNext.order > bestOrder || (L.enemyNext.order === bestOrder && L.own > bestMins)) { bestOrder = L.enemyNext.order; bestMins = L.own; lane = l; }
     }

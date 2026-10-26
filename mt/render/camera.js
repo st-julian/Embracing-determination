@@ -8,7 +8,8 @@
 //   lobby            free camera drifting slowly over a jungle habitat behind the lobby UI
 //   1 local alive    SOLO follow ('free', driven here): frames the trainer AND its active monster with velocity
 //                    look-ahead, centred in the screen band left free by the HUD (app.mtHudInsets), zooms out a
-//                    little if the monster strays, leans ≤ 2.5 m toward nearby visible enemies (clamped so trainer + monster stay in the band); SNAPS (no long lerp) after teleports / scenario setup / respawn
+//                    little if the monster strays, leans ≤ 2.5 m toward nearby visible enemies, clamped so trainer + monster
+//                    stay in a safe rect (touch: x 34–68 % × top bar–56 %, the trainer itself resting slightly up-right of centre, clear of the thumbs); SNAPS (no long lerp) after teleports / scenario setup / respawn
 //                    (> 12 m from the current focus). Minimap / legacy look-around drags take priority while held.
 //   1 local dead     hold on the death spot for 2.5 s, then SPECTATE: follow the nearest living ally trainer until respawn
 //   2+ locals        SHARED camera ('free'): frames every living local trainer (+ look-ahead from their velocity and
@@ -151,6 +152,25 @@ export class SharedCamera {
     const lh = reg.get('hud'), lm = lh && lh.minimap; return !!(lm && lm.drove && this.rig() && this.rig().mode === 'free' && !this.owned);
   }
 
+  /**
+   * Where the solo trainer may sit on screen (fractions, y down) and where it rests (cx, cy).
+   * Touch: the thumbs own the bottom corners (joystick bottom-left, button cluster bottom-right, card bottom-left), so the
+   * trainer stays in the middle band (x 34–68 %), above 56 % of the height, resting slightly up-right of the centre (52 %, 40 %),
+   * away from the joystick; its monster only has to stay in `group` (10–90 % × top bar–card). Pad / keys: the band between the
+   * top bar and the bottom cards.
+   */
+  safeRect(app) {
+    const ins = app.mtHudInsets || HUD_INSETS, it = clamp01(ins.top ?? HUD_INSETS.top), ib = clamp01(ins.bottom ?? HUD_INSETS.bottom);
+    if (app.mtInputMode === 'touch' && app.mtTouch && app.mtTouch.active) {
+      const y0 = it + 0.04, y1 = Math.max(y0 + 0.25, Math.min(0.56, 1 - ib - 0.04));
+      // the monster may roam wider: the whole free area between the top bar and the bottom card, off the screen edges
+      const group = { x0: 0.1, x1: 0.9, y0: it + 0.03, y1: Math.max(y1 + 0.1, Math.min(0.8, 1 - ib - 0.02)) };
+      return { x0: 0.34, x1: 0.68, y0, y1, cx: 0.52, cy: Math.min(y1 - 0.08, Math.max(y0 + 0.12, 0.4)), touch: true, group };
+    }
+    const y0 = it + 0.03, y1 = Math.max(y0 + 0.3, 1 - ib - 0.03);
+    return { x0: 0.18, x1: 0.82, y0, y1, cx: 0.5, cy: (y0 + y1) / 2 };
+  }
+
   /** Solo follow: trainer + active monster, look-ahead, HUD-aware centring, snap after big jumps. */
   solo(rig, w, u, f, dt, app) {
     if (this.externalLook(app)) { this.mode = 'look'; this.owned = false; return; }
@@ -168,29 +188,38 @@ export class SharedCamera {
     // fight-aware: lean (smoothed, ≤ FIGHT_MAX m) toward visible enemy trainers / monsters nearby so the fight is in frame
     let ex = 0, ey = 0, en = 0;
     for (const e of w.queryUnits(u.x, u.y, FIGHT_R, (q) => q.alive && q.team !== u.team && q.team !== 2 && (q.kind === 'champion' || q.kind === 'monster') && (!q.visible || q.visible[u.team] !== false), [])) { ex += e.x; ey += e.y; en++; }
-    if (en) { let fx = (ex / en - u.x) * 0.25, fy = (ey / en - u.y) * 0.25; const fl = Math.hypot(fx, fy); if (fl > FIGHT_MAX) { fx *= FIGHT_MAX / fl; fy *= FIGHT_MAX / fl; } lx += fx; ly += fy; }
-    const { free, mid } = this.band(app);
+    const fmax = app.mtInputMode === 'touch' ? FIGHT_MAX * 0.7 : FIGHT_MAX; // touch: the trainer must not slide toward the thumbs
+    if (en) { let fx = (ex / en - u.x) * 0.25, fy = (ey / en - u.y) * 0.25; const fl = Math.hypot(fx, fy); if (fl > fmax) { fx *= fmax / fl; fy *= fmax / fl; } lx += fx; ly += fy; }
+    // safe rect (screen fractions) the trainer + its monster must stay in: clear of the top bar, the bottom card and —
+    // in touch play — the joystick (bottom-left) and the button cluster (bottom-right); the group sits at (cx, cy)
+    const R = this.safeRect(app);
     const ext = this.extents(rig, 1);
-    const needX = ((maxX - minX) / 2 + MARGIN_X) / ext.hw, needY = ((maxY - minY) + MARGIN_N + MARGIN_S) / (2 * ext.hh * free);
+    const G = R.group || R; // the rect the whole group (trainer + monster) must fit in; the trainer itself stays in R
+    const needX = ((maxX - minX) / 2 + SOLO_MARGIN_X) / (ext.hw * (G.x1 - G.x0)), needY = ((maxY - minY) + MARGIN_N + MARGIN_S) / (2 * ext.hh * (G.y1 - G.y0));
     this.zoomTo(rig, Math.min(SOLO_ZOOM_MAX, Math.max(1, needX, needY)), dt, !this.owned);
     const ez = this.extents(rig, rig.zoom);
-    // keep the whole group inside the band: centre on the group box (with sprite-height margin north), shifted south
-    // by the band offset so it sits above the bottom HUD cards
-    const gx = (minX + maxX) / 2 * 0.5 + cx * 0.5, gy = ((minY - MARGIN_N + maxY + MARGIN_S) / 2) * 0.5 + (cy - (MARGIN_N - MARGIN_S) / 2) * 0.5;
-    const tx0 = gx, ty0 = gy + (0.5 - mid) * 2 * ez.hh;
+    // the point put at (R.cx, R.cy): between the group box (sprite-height margin north) and the trainer-weighted centre;
+    // touch weights the trainer itself (the thing you steer stays at the rest point, the monster roams around it)
+    const wT = R.touch ? 0.7 : 0.5, bx = (minX + maxX) / 2, by = (minY - MARGIN_N + maxY + MARGIN_S) / 2;
+    const gx = bx * (1 - wT) + (R.touch ? ux : cx) * wT, gy = by * (1 - wT) + ((R.touch ? uy : cy) - (MARGIN_N - MARGIN_S) / 2) * wT;
+    const tx0 = gx - (R.cx - 0.5) * 2 * ez.hw, ty0 = gy - (R.cy - 0.5) * 2 * ez.hh;
     const jump = !this.owned || rig.mode !== 'free' || Math.hypot(tx0 - rig.focusX, ty0 - rig.focusY) > SNAP_DIST;
     if (jump) { this.leadX = lx; this.leadY = ly; } else {
       const k = 1 - Math.exp(-dt * 2.6);
       this.leadX = (this.leadX || 0) + (lx - (this.leadX || 0)) * k; this.leadY = (this.leadY || 0) + (ly - (this.leadY || 0)) * k;
     }
     let tx = tx0 + this.leadX, ty = ty0 + this.leadY;
-    // look-ahead / fight lean may never push the trainer or its monster out of the HUD-free band
-    const ins = app.mtHudInsets || HUD_INSETS, it = clamp01(ins.top ?? HUD_INSETS.top), ib = clamp01(ins.bottom ?? HUD_INSETS.bottom);
-    const yLo = maxY + MARGIN_S - (0.5 - ib) * 2 * ez.hh, yHi = minY - MARGIN_N + (0.5 - it) * 2 * ez.hh;
-    if (yLo <= yHi) ty = Math.min(yHi, Math.max(yLo, ty));
-    const xLo = maxX + SOLO_MARGIN_X - ez.hw, xHi = minX - SOLO_MARGIN_X + ez.hw;
-    if (xLo <= xHi) tx = Math.min(xHi, Math.max(xLo, tx));
+    // look-ahead / fight lean may never push the group out of its rect, nor the trainer out of the safe rect (last: wins)
+    const clampTo = (Q, x0, x1, y0, y1) => {
+      const xLo = x1 + 0.8 - (Q.x1 - 0.5) * 2 * ez.hw, xHi = x0 - 0.8 - (Q.x0 - 0.5) * 2 * ez.hw;
+      tx = xLo <= xHi ? Math.min(xHi, Math.max(xLo, tx)) : (xLo + xHi) / 2;
+      const yLo = y1 + MARGIN_S * 0.5 - (Q.y1 - 0.5) * 2 * ez.hh, yHi = y0 - MARGIN_N - (Q.y0 - 0.5) * 2 * ez.hh;
+      ty = yLo <= yHi ? Math.min(yHi, Math.max(yLo, ty)) : (yLo + yHi) / 2;
+    };
+    clampTo(G, minX, maxX, minY, maxY);
+    if (G !== R) clampTo(R, ux, ux, uy, uy);
     tx = Math.min(MAP_MAX, Math.max(MAP_MIN, tx)); ty = Math.min(MAP_MAX, Math.max(MAP_MIN, ty));
+    this.rect = R;
     rig.mode = 'free'; rig.setFocus(tx, ty, jump);
     this.owned = true; this.mode = 'solo';
   }

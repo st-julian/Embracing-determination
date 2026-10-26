@@ -19,6 +19,7 @@ import { SPECIES_ART } from '../../art/sprites/index.js';
 import { o as heightAt } from '../../assets/height-CVtQdZ3e.js';
 import { bossName } from '../i18n/index.js'; // i18n: river boss plate name in the current language
 import { jaScale } from '../i18n/dom.js';      // Japanese glyph scale m (crisp kana need m·q/k whole)
+import { chevron } from './art.js';
 
 const NAVY = '#1b2350', TRACK = '#2e3566';
 const REL = { ally: ['#3b86f2', '#9cc8ff'], enemy: ['#ef5243', '#ffb0a6'], wild: ['#f2b632', '#ffe08a'], boss: ['#9a5cff', '#d8bfff'] };
@@ -163,7 +164,10 @@ export class Plates {
       const name = named ? this.label(nm, q, true, p.local ? '#fffdf6' : u.team === frame.viewerTeam ? '#e3efff' : '#ffe4df') : null;
       const nx = name ? Math.round(bx + (w - name.w) / 2) : bx, ny = name ? by - name.h - q : by;
       const row = p.pet ? 5 * q : 0;   // party plate: the active monster's HP row under the trainer bar
-      return { bx, by, w, hh, name, nx, ny, row, x0: Math.min(bx - 12 * q, nx), y0: name ? ny : by - 4 * q, x1: Math.max(bx + w + q, name ? nx + name.w : 0), y1: by + hh + q + row };
+      // level badge = the ACTIVE monster's level, labelled "Lv" (not the party average, which dropped after a catch)
+      const T = u.mtTrainer, rec = T && T.party[T.activeIdx], bt = rec ? 'Lv' + rec.level : null;
+      const bl = bt ? this.label(bt, q, true, '#fffdf6') : null, bw = bl ? Math.max(9 * q, bl.w + q) : 0;
+      return { bx, by, w, hh, name, nx, ny, row, bt, bw, x0: Math.min(bx - bw - 3 * q, nx), y0: name ? ny : by - 4 * q, x1: Math.max(bx + w + q, name ? nx + name.w : 0), y1: by + hh + q + row };
     }
     if (k === 'pet' || k === 'wild') {
       const wild = k === 'wild', w = (wild ? 24 : 28) * q, hh = 3 * q, bx = p.cx - (w >> 1) + 5 * q, by = p.base - 4 * q;
@@ -300,6 +304,20 @@ export class Plates {
     }
     // paint low priority first so trainer plates stay on top where anchored pet bars touch them
     for (let i = todo.length - 1; i >= 0; i--) this.paint(bars, g, todo[i][0], todo[i][1], frame);
+    // "this one is yours": a chevron in the local player's colour over each local ACTIVE monster (also when its HP sits in
+    // the trainer's party plate) — same marker as on the card portrait. Above the monster's own plate when it has one.
+    const own = new Map(); for (const [p, m] of todo) if (p.kind === 'pet' && p.local && !m.mini) own.set(p.u.id, m);
+    for (const p of Q) {
+      if (p.kind !== 'pet' || !p.local || !p.u.alive) continue;
+      // 1.5× the plate scale (it must read at a glance next to a same-species wild monster), bobbing 1–2 px
+      const sp = Math.max(2, Math.round(q * 1.5)), cv = chevron(p.col[0]), m = own.get(p.u.id), cw = 9 * sp, ch = 7 * sp;
+      const bob = Math.round((Math.sin(performance.now() / 260) * 0.5 + 0.5) * sp);
+      const cx = Math.round(p.cx - cw / 2), cy = Math.round((m ? m.y0 - ch - q : p.base - ch - 2 * q) - bob);
+      if (mask.some((r) => cx < r[2] && cx + cw > r[0] && cy < r[3] && cy + ch > r[1])) continue;
+      g.imageSmoothingEnabled = false; g.drawImage(cv, cx, cy, cw, ch);
+      if (bars.onDraw) bars.onDraw(cx - q, cy - q, cx + cw + q, cy + ch + q);
+      placed.push({ x0: cx, y0: cy, x1: cx + cw, y1: cy + ch });
+    }
     this.lastPlaced = placed;
     // published for in-world combat text (mt/render/fx-numbers.js) so numbers never cover a plate (overlay device px)
     this.rects = placed.map((r) => [r.x0, r.y0, r.x1, r.y1]); this.rectsT = performance.now();
@@ -316,7 +334,6 @@ export class Plates {
     }
     if (p.kind === 'trainer') {
       this.bar(g, m.bx, m.by, m.w, m.hh, q, st, col);
-      const T = u.mtTrainer, lvl = T ? Math.max(1, Math.round(T.avgLevel || u.level || 1)) : (u.level || 1);
       if (p.pet) {   // party row: [type pip] monster HP (thinner), sharing the trainer bar's bottom border
         const pu = p.pet.u, f = FORMS[pu.mtMon.form] || {}, tc = TYPE_COLORS[(f.types && f.types[0]) || pu.mtMon.line] || '#888';
         const ry = m.by + m.hh + 2 * q, px = m.bx;
@@ -324,7 +341,7 @@ export class Plates {
         g.fillStyle = 'rgba(255,255,255,.45)'; g.fillRect(px, ry, 3 * q, q);
         this.bar(g, px + 5 * q, ry, m.w - 5 * q, 3 * q, q, p.pet.st, p.pet.col);
       }
-      this.badge(g, m.bx - 11 * q, m.by - 3 * q, q, String(lvl), NAVY);
+      if (m.bt) this.badge(g, m.bx - m.bw - 2 * q, m.by - 3 * q, q, m.bt, NAVY);
       if (m.name) g.drawImage(m.name.c, m.nx, m.ny);
     } else if (p.kind === 'pet' || p.kind === 'wild') {
       this.bar(g, m.bx, m.by, m.w, m.hh, q, st, col);

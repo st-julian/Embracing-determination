@@ -6,8 +6,8 @@
 //   backdrop  concentric band "stage" (mt/ui/backdrop.js) in the spotlit monster's palette (fire / water / grass)
 //   stage     the three starters (Cindle / Puddlet / Sproutle), "crisp" bakes (mt/ui/pixelclean.js crispSprite: flat
 //             tone ramps, no specks, a clean 1-px outline; baked off-thread by title.worker.js); the spotlit one in full
-//             colour at the stage scale, feet in the light pool under a cone; the rivals as FLAT one-tone near-black
-//             silhouettes one raster step smaller, facing the centre. Cindle (warm palette) holds the spotlight for the
+//             colour at the stage scale, feet in the light pool under a cone; the rivals as FLAT one-tone silhouettes
+//             (a deep shade of their element) with a 1-px lighter rim, one raster step smaller, facing the centre. Cindle (warm palette) holds the spotlight for the
 //             first 5.5 s, then it moves on every 5.5 s (palette cross-fade, sizes swap). Motes drift in the light.
 //             Captures (software GL) run exactly this; only CSS animations are frozen there.
 //   logo      SUNDERED VALE rasterised on the grid with 1-px lines (logo.js logoPixels thin), small, at the top
@@ -18,9 +18,16 @@
 // laid exactly over the band (Play) and the tab (the picker's other-language option); pads use ✕ / Options /
 // D-pad ← → (mt/ui/lobby.js), keys Enter / L / ← → (lobby.js, i18n dom.js). Layouts: 'center' (logo top, stage, band;
 // 4:3) and 'side' (logo left, stage right, band; 16:9 / phones). The lobby reuses the backdrop (app.mtMenuGrid).
+// The front-end flow (mt/ui/menu.js, app.mtMenu.screen) adds two compositions on the finer MENU grid (~384 rows, the
+// lobby's: the DOM text of those screens is the 16-px pixel font at 1 font px = 1 art px):
+//   main      logo + the cycling starter stage in the left column (L.split), the menu panels (DOM) on the right
+//   starter   "choose your partner": the stage centred and INTERACTIVE — the spotlight follows app.mtMenu.focus.starter,
+//             the other two stand smaller, in colour but dimmed (you are choosing between them, not guessing);
+//             the choose beat hops the chosen one with a burst of sparkles. starterAt(x, y) = hit test for taps.
+// The legacy title DOM is hidden (menu.js owns every control now).
 import { t, getLang, onLangChange } from '../i18n/index.js';
 import { heroFrames } from './stage.js';
-import { TITLE_CAST, TITLE_CRISP, TITLE_FRAMES, SIL_STEP } from './artspec.js';
+import { TITLE_CAST, TITLE_CRISP, TITLE_FRAMES, SIL_STEP, TITLE_SCALES } from './artspec.js';
 import { silhouetteData } from './pixelclean.js';
 import { logoPixels } from './logo.js';
 import { drawBackdrop, drawSpot, Motes } from './backdrop.js';
@@ -29,6 +36,7 @@ import { textCanvas, glyphCanvas, rowCanvas, fontReady } from './pixeltext.js';
 const CAST = TITLE_CAST;  // ids, palettes, silhouette tones (artspec.js; shared with the art baker)
 const CRISP = TITLE_CRISP; // hero bake: flat tone ramps + a clean 1-art-px outline (pixelclean.js)
 const BAND_H = 26;                      // bottom band (prompt + language tab), art px
+const MENU_ROWS = 384;                  // menu grid (main / starter / lobby): ~384 art rows, integer device-px zoom
 const FIRST = 1;         // Cindle is spotlit first
 const CYCLE = 5.5;       // seconds per spotlit starter
 const MON_H = 50;        // tallest starter idle height at raster scale 1 (art px, incl. margin)
@@ -58,16 +66,34 @@ const URLP = (() => { try { return new URLSearchParams(location.search); } catch
 
 const cnv = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
 
+/** rival silhouette tones per starter: [body, rim] — a deep shade of the element and a lighter 1-px rim, so the shape
+ *  reads as a creature on the warm title backdrop instead of a black blob */
+const SIL_TONES = { puddlet: ['#1c2a58', '#6f8fd8'], cindle: ['#401b12', '#c8683f'], sproutle: ['#183a1d', '#68ae56'] };
 /**
- * rival silhouette of a frame: ONE flat near-black tone, no interior shading (Gen-5 starter screen). The mask is
- * tidied first (lone spur pixels dropped, 1-px notches filled) so the outline reads cleanly.
+ * rival silhouette of a frame: ONE flat tone with a 1-px lighter rim on every edge pixel (no interior shading). The
+ * mask is tidied first (lone spur pixels dropped, 1-px notches filled) so the outline reads cleanly. Cached per frame.
  */
-function silhouette(f, tone) {
-  if (f.sil && f.silTone === tone) return f.sil;   // baked with the atlas (stage.js) — else derive it once here
+function silhouette(f, id) {
+  const [body, rim] = SIL_TONES[id] || ['#16163a', '#5a5a96'];
+  if (f.silR && f.silRT === body) return f.silR;
   const { w, h } = f, c = cnv(w, h), g = c.getContext('2d'); g.drawImage(f.c, 0, 0);
-  g.putImageData(new ImageData(silhouetteData(g.getImageData(0, 0, w, h).data, w, h, tone), w, h), 0, 0);
-  f.sil = c; f.silTone = tone;
+  const d = silhouetteData(g.getImageData(0, 0, w, h).data, w, h, body), out = new Uint8ClampedArray(d);
+  const at = (x, y) => x >= 0 && y >= 0 && x < w && y < h && d[(y * w + x) * 4 + 3] > 0, k = parseInt(rim.slice(1), 16);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (!at(x, y) || (at(x - 1, y) && at(x + 1, y) && at(x, y - 1) && at(x, y + 1))) continue;
+    const i = (y * w + x) * 4; out[i] = k >> 16 & 255; out[i + 1] = k >> 8 & 255; out[i + 2] = k & 255;
+  }
+  g.clearRect(0, 0, w, h); g.putImageData(new ImageData(out, w, h), 0, 0);
+  f.silR = c; f.silRT = body;
   return c;
+}
+
+/** darkened copy of a frame (the starter screen's unchosen starters: in colour, a step back), cached on the frame */
+function dimmed(f, k) {
+  const key = 'dim' + k; if (f[key]) return f[key];
+  const c = cnv(f.w, f.h), g = c.getContext('2d');
+  g.drawImage(f.c, 0, 0); g.globalCompositeOperation = 'source-atop'; g.fillStyle = `rgba(20,16,44,${k})`; g.fillRect(0, 0, f.w, f.h);
+  return (f[key] = c);
 }
 
 export class TitleScreen {
@@ -130,32 +156,35 @@ export class TitleScreen {
   }
 
   // ------------------------------------------------------------------ grid + layout (art px)
-  grid(lobby) {
+  /** kind 'title' (~200 rows) | 'main' | 'starter' | 'lobby' (menu grid, ~384 rows) */
+  grid(kind) {
     const W = innerWidth, H = innerHeight, dpr = devicePixelRatio || 1, Wd = Math.round(W * dpr), Hd = Math.round(H * dpr);
-    // title: ~200 art rows (Gen-5 top screen); lobby: ~384 rows — there the DOM text (16-px pixel font, 1 font px =
-    // 1 art px), every panel stroke (1 art px) and the line-up sprites all share this one grid (lobby.js --u)
-    const Z = Math.max(2, Math.round(Hd / (lobby ? 384 : 200)));
+    // title: ~200 art rows (Gen-5 top screen); menu screens + lobby: ~384 rows — there the DOM text (16-px pixel font,
+    // 1 font px = 1 art px), every panel stroke (1 art px) and the sprites all share this one grid (lobby.js --u)
+    const Z = Math.max(2, Math.round(Hd / (kind === 'title' ? 200 : MENU_ROWS)));
     const aw = Math.ceil(Wd / Z), ah = Math.ceil(Hd / Z);
     return { W, H, dpr, Z, aw, ah };
   }
-  layoutNow(lobby) {
-    const G = this.G = this.grid(lobby), { aw, ah, Z, dpr } = G;
+  layoutNow(kind) {
+    const G = this.G = this.grid(kind), { aw, ah, Z, dpr } = G;
     if (this.canvas.width !== aw) this.canvas.width = aw;
     if (this.canvas.height !== ah) this.canvas.height = ah;
     this.g.imageSmoothingEnabled = false;
     Object.assign(this.canvas.style, { width: (aw * Z) / dpr + 'px', height: (ah * Z) / dpr + 'px' });
-    this.app.mtMenuGrid = { Z, dpr, aw, ah, lobby: !!lobby };
+    this.app.mtMenuGrid = { Z, dpr, aw, ah, lobby: kind !== 'title', kind };
     this.backs.clear();
-    if (lobby) { this.laid = true; return; }
+    this.kind = kind;
+    if (kind === 'lobby') { this.laid = true; return; }
+    if (kind === 'main') { this.layoutMain(); return; }
+    if (kind === 'starter') { this.layoutStarter(); return; }
     const side = URLP.get('ttl') ? URLP.get('ttl') === 'side' : aw / ah >= 1.5;
     this.side = side;
     // logo: the biggest letter size that fits its box; every outline line 1 art px (the scale of the text + sprites).
     // Stroke widths stay whole pixels (letter stroke = 2.5 units: u = 1.2 / 1.6 / 2 -> 3 / 4 / 5 px).
     const bandY = ah - BAND_H;
     const fit = side ? [aw * 0.33, bandY * 0.5] : [aw * 0.38, ah * 0.29];
-    let logo = null;
-    for (const [u1, u2] of [[2, 4], [1.6, 3.2], [1.2, 2.4], [1.2, 2]]) { const c = logoPixels(u1, u2, { thin: true, ext: Math.max(2, Math.round(u2)), close: 2 }); logo = c; if (c.width <= fit[0] && c.height <= fit[1]) break; }
-    this.logo = logo;
+    this.logo = this.fitLogo(fit, [[2, 4], [1.6, 3.2], [1.2, 2.4], [1.2, 2]]);
+    const logo = this.logo;
     this.texts = null; this.makeTexts();
     const L = { bandY };
     L.promptCx = aw / 2;
@@ -177,18 +206,85 @@ export class TitleScreen {
       L.spread = Math.min(room / 3, 46 * L.S); L.back = Math.round(18 * L.S);
     }
     this.L = L;
-    // frames at the stage scale (clean shading, no rim: bold Gen-5 clusters). Every starter has two sizes: lit = L.S,
-    // silhouette = one raster step (0.5) smaller; the spotlit one is drawn big, the other two small, swapping as the spotlight cycles.
-    // Bake order: the opening composition first (Cindle big, the rivals small), then the rest.
-    const sS = Math.max(1, L.S - SIL_STEP), bake = (i, s) => heroFrames(CAST[i].id, s, TITLE_FRAMES, 8, false, undefined, CRISP);
-    const first = [bake(FIRST, L.S), ...CAST.map((m, i) => (i === FIRST ? null : bake(i, sS)))];
-    this.big = CAST.map((m, i) => (i === FIRST ? first[0] : bake(i, L.S)));
-    this.small = CAST.map((m, i) => (i === FIRST ? bake(i, sS) : first[i + 1]));
-    this.frames = [...this.big, ...this.small];
-    this.backs.clear();
+    this.bakeCast(true);
     this.placeDom();
     this.laid = true;
   }
+  /** the biggest logo raster (unit pairs, largest first) that fits [w, h] */
+  fitLogo(fit, sizes) {
+    let logo = null;
+    for (const [u1, u2] of sizes) { const c = logoPixels(u1, u2, { thin: true, ext: Math.max(2, Math.round(u2)), close: 2 }); logo = c; if (c.width <= fit[0] && c.height <= fit[1]) break; }
+    return logo;
+  }
+  /**
+   * frames at the stage scale (clean shading, no rim: bold Gen-5 clusters). Every starter has two sizes: lit = L.S,
+   * small = one raster step (SIL_STEP) smaller (title: a flat silhouette; starter screen: in colour, dimmed); the spotlit
+   * one is drawn big, the other two small, swapping as the spotlight moves.
+   * Bake order: the opening composition first (the spotlit one big, the rivals small), then the rest.
+   */
+  bakeCast() {
+    const L = this.L, first0 = this.active;
+    const sS = Math.max(1, L.S - SIL_STEP), bake = (i, sc) => heroFrames(CAST[i].id, sc, TITLE_FRAMES, 8, false, undefined, CRISP);
+    const first = [bake(first0, L.S), ...CAST.map((m, i) => (i === first0 ? null : bake(i, sS)))];
+    this.big = CAST.map((m, i) => (i === first0 ? first[0] : bake(i, L.S)));
+    this.small = CAST.map((m, i) => (i === first0 ? bake(i, sS) : first[i + 1]));
+    this.frames = [...this.big, ...this.small];
+  }
+  /** largest pre-baked title scale <= s (the stage is complete the moment it opens) */
+  snapScale(s) { return TITLE_SCALES.reduce((a, v) => (v <= s + 1e-6 ? v : a), TITLE_SCALES[0]); }
+  /** main menu: logo + the cycling stage in the left column, the DOM panels right of L.split */
+  layoutMain() {
+    const { aw, ah } = this.G, L = { menu: true }, foot = 26;
+    const portrait = aw < ah * 1.15;
+    if (portrait) {
+      this.logo = this.fitLogo([aw - 24, ah * 0.22], [[3.2, 6.4], [2.8, 5.6], [2.4, 4.8], [2, 4], [1.6, 3.2], [1.2, 2.4]]);
+      L.logo = [Math.round((aw - this.logo.width) / 2), 12];
+      L.split = 0; L.ptop = L.logo[1] + this.logo.height + 12; L.noStage = true;
+      L.S = 1; L.cx = aw / 2; L.floor = ah; L.spread = 40; L.back = 10;
+    } else {
+      L.split = Math.round(aw * 0.45);
+      const colW = L.split - 14;
+      this.logo = this.fitLogo([colW, ah * 0.3], [[3.2, 6.4], [2.8, 5.6], [2.4, 4.8], [2, 4], [1.6, 3.2], [1.2, 2.4]]);
+      L.logo = [Math.round(L.split / 2 - this.logo.width / 2 + 4), Math.max(8, Math.round(ah * 0.05))];
+      L.floor = ah - foot - 16;
+      const top = L.logo[1] + this.logo.height + 10;
+      const byH = (L.floor - top) / MON_H, byW = colW / (3 * 40);
+      L.S = this.snapScale(Math.max(1, Math.min(2.5, Math.min(byH, byW))));
+      L.cx = Math.round(L.split / 2 + 4); L.spread = Math.min(colW / 3, 44 * L.S); L.back = Math.round(16 * L.S);
+    }
+    this.L = L;
+    this.bakeCast();
+    this.laid = true;
+  }
+  /** choose your starter: the stage centred above the text box (menu.js reports the box top as stageBottom) */
+  layoutStarter() {
+    const { aw, ah } = this.G, L = { menu: true, starter: true };
+    const M = this.app.mtMenu, boxTop = M && M.stageBottom > 0 && M.stageBottom < ah ? M.stageBottom : ah - 64;
+    L.boxTop = boxTop;
+    L.floor = boxTop - 14;
+    const top = 40, arrows = 2 * 34;
+    const byH = (L.floor - top) / (MON_H + 4), byW = (aw - arrows - 24) / (3 * 46);
+    L.S = this.snapScale(Math.max(1, Math.min(3.5, Math.min(byH, byW))));
+    L.cx = Math.round(aw / 2); L.spread = Math.round(Math.min((aw - arrows) / 3.1, 58 * L.S)); L.back = Math.round(14 * L.S);
+    this.L = L;
+    this.bakeCast();
+    this.laid = true;
+  }
+  /** hit test (CSS px) -> starter index on the starter stage, or -1 */
+  starterAt(cx, cy) {
+    const G = this.G, L = this.L; if (!G || !L || !L.starter || !this.big) return -1;
+    const x = (cx * G.dpr) / G.Z, y = (cy * G.dpr) / G.Z;
+    let best = -1, bd = 1e9;
+    for (let i = 0; i < CAST.length; i++) {
+      const [px, py] = this.pos(i), e = i === this.active ? this.big[i] : this.small[i], f = e && e.frames[0];
+      const w = f ? f.w : 40, hh = f ? f.h : 50;
+      if (x >= px - w / 2 - 6 && x <= px + w / 2 + 6 && y >= py - hh - 4 && y <= py + 10) { const d = Math.abs(x - px); if (d < bd) { bd = d; best = i; } }
+    }
+    return best;
+  }
+  /** stage position (feet) of starter i: the title keeps the centre one in front; on the starter screen the spotlit one
+   *  steps forward to the front line and the others stand back */
+  pos(i) { const L = this.L, front = L.starter ? i === this.active : i === 1; return [Math.round(L.cx + (i - 1) * L.spread), L.floor - (front ? 0 : L.back)]; }
   /** text pieces (rebuilt on language / input-mode change and when the pixel font arrives) */
   makeTexts() {
     if (!fontReady()) { this.texts = null; return; }
@@ -244,6 +340,17 @@ export class TitleScreen {
     if (!c) { const { aw, ah } = this.G, L = this.L; c = drawBackdrop(aw, ah, pal, L ? L.cx : aw / 2, L ? L.floor - 2 : ah * 0.8); this.backs.set(pal, c); }
     return c;
   }
+  /** spotlight target: the title / main menu cycle it; the starter screen follows the menu cursor */
+  spotlight(dt) {
+    const M = this.app.mtMenu, L = this.L;
+    if (L.starter && M) {
+      const want = Math.max(0, Math.min(CAST.length - 1, M.focus.starter));
+      if (want !== this.active) { this.prevActive = this.active; this.active = want; this.fade = 0; }
+      this.cycT = 0;
+    } else if (this.cycT > CYCLE) { this.cycT = 0; this.prevActive = this.active; this.active = (this.active + 1) % CAST.length; this.fade = 0; }
+    this.fade = Math.min(1, this.fade + dt / (L.starter ? 0.28 : 0.7));
+    if (this.fade >= 1) this.prevActive = this.active;
+  }
   draw(dt) {
     const g = this.g, { aw, ah } = this.G, L = this.L;
     // never an empty stage: the light pool, the cone and the starters fade in together (0.4 s) once ALL three
@@ -253,19 +360,19 @@ export class TitleScreen {
     const ok = this.artReady();
     if (ok) { this.stageA = this.stageA == null ? 1 : Math.min(1, this.stageA + dt / 0.4); this.cycT = (this.cycT || 0) + dt; }
     else if (this.stageA == null) this.stageA = 0;
-    const SA = ok ? this.stageA : 0;
-    if (this.cycT > CYCLE) { this.cycT = 0; this.prevActive = this.active; this.active = (this.active + 1) % CAST.length; this.fade = 0; }
-    this.fade = Math.min(1, this.fade + dt / 0.7);
-    if (this.fade >= 1) this.prevActive = this.active;
-    const pos = (i) => [Math.round(L.cx + (i - 1) * L.spread), L.floor - (i === 1 ? 0 : L.back)];
+    const SA = ok && !L.noStage ? this.stageA : 0;
+    this.spotlight(dt);
+    const pos = (i) => this.pos(i);
     const tx = pos(this.active)[0];
-    this.spotX = this.spotX == null ? tx : this.spotX + (tx - this.spotX) * Math.min(1, dt * 4);
+    this.spotX = this.spotX == null ? tx : this.spotX + (tx - this.spotX) * Math.min(1, dt * (L.starter ? 10 : 4));
     const palA = CAST[this.active].pal, palB = CAST[this.prevActive].pal;
     g.globalAlpha = 1; g.drawImage(this.back(palB), 0, 0);
     if (this.fade < 1 && palA !== palB) { g.globalAlpha = this.fade; g.drawImage(this.back(palA), 0, 0); g.globalAlpha = 1; } else if (palA !== palB) g.drawImage(this.back(palA), 0, 0);
     const fy = pos(this.active)[1];
     if (SA > 0) drawSpot(g, palA, this.spotX, fy, Math.round(15 * L.S), Math.round(28 * L.S), SA);
     this.motes.update(dt, aw, ah); this.motes.draw(g, palA);
+    // the choose beat (starter screen): a hop (0.45 s) and a ring of sparkles
+    const M = this.app.mtMenu, ch = L.starter && M && M.chosen ? M.chosen : null, cht = ch ? M.t - ch.t0 : 0;
     // starters: rivals first (behind), the spotlit one last
     const order = [0, 2, 1].sort((a, b) => (a === this.active) - (b === this.active));
     for (const i of order) {
@@ -274,25 +381,36 @@ export class TitleScreen {
       // idle frame: 8 fps, starters 3 frames apart, phase centred so t = whole seconds sits mid-frame
       const pick = (e) => { const f0 = e.frames[0]; return f0 && (e.frames[Math.floor(this.t * 8 + i * 3 + 0.5) % e.n] || f0); };
       const fb = pick(this.big[i]), fs = pick(this.small[i]);
-      const [x, y] = pos(i), flip = i === 0;   // both rivals face the centre
+      let [x, y] = pos(i);
+      if (L.starter) y = L.floor - Math.round(L.back * (1 - lit));   // stepping forward / back with the cross-fade
+      if (ch && ch.i === i && cht < 0.45) y -= Math.round(Math.sin((cht / 0.45) * Math.PI) * 10 * L.S / 2);
+      const flip = i === 0;   // both rivals face the centre
       const draw = (src, f) => { if (flip) { g.save(); g.translate(x * 2, 0); g.scale(-1, 1); g.drawImage(src, x - f.ax, y - f.ay); g.restore(); } else g.drawImage(src, x - f.ax, y - f.ay); };
-      if (lit < 1 && fs) { g.globalAlpha = SA; draw(silhouette(fs, CAST[i].sil), fs); }
+      if (lit < 1 && fs) {
+        g.globalAlpha = SA;
+        if (L.starter) { g.globalAlpha = SA * (1 - lit); draw(dimmed(fs, 0.42), fs); }   // choosing: all three in colour
+        else draw(silhouette(fs, CAST[i].id), fs);
+      }
       const f = fb;
       if (lit > 0 && f) {
         // contact shadow on the pool, then the sprite
         g.globalAlpha = 0.35 * lit * SA; g.fillStyle = '#3a1c0c';
         const sw = Math.round(f.w * 0.3), sh = Math.max(2, Math.round(sw * 0.25));
-        for (let j = -sh; j <= sh; j++) { const w = Math.round(sw * Math.sqrt(1 - (j * j) / (sh * sh))); g.fillRect(x - w, y + j, w * 2 + 1, 1); }
+        const fy0 = L.starter ? y : pos(i)[1];
+        for (let j = -sh; j <= sh; j++) { const w = Math.round(sw * Math.sqrt(1 - (j * j) / (sh * sh))); g.fillRect(x - w, fy0 + j, w * 2 + 1, 1); }
         g.globalAlpha = lit * SA; draw(f.c, f);
       }
       g.globalAlpha = 1;
     }
+    if (ch) this.burst(g, pos(ch.i), cht, L.S);
+    if (L.starter) return;
     // logo + twinkle
     g.drawImage(this.logo, L.logo[0], L.logo[1]);
     { // sparkle for 0.8 s of every 3.2 s (t mod 3.2 in [1.6, 2.4))
       const tw = ((this.t + 1.6) % 3.2) / 3.2;
       if (tw < 0.25) { const k = tw < 0.12 ? 2 : 1, sx = L.logo[0] + this.logo.width - 8, sy = L.logo[1] + 6; g.fillStyle = '#fff'; g.fillRect(sx - k, sy, k * 2 + 1, 1); g.fillRect(sx, sy - k, 1, k * 2 + 1); }
     }
+    if (L.menu) return;
     // bottom band (Gen-5 menu text band): translucent dark, 1-px darker top line; prompt centred, language tab right
     g.globalAlpha = 0.5; g.fillStyle = '#140f2c'; g.fillRect(0, L.bandY, aw, BAND_H);
     g.globalAlpha = 0.35; g.fillRect(0, L.bandY, aw, 1); g.globalAlpha = 1;
@@ -302,6 +420,17 @@ export class TitleScreen {
       g.drawImage(this.texts.prompt, P[0], P[1]);
       g.globalAlpha = 1; g.drawImage(this.texts.chip, C[0], C[1]);
     }
+  }
+  /** "I choose you": 8 four-point sparkles flying out of the chosen starter, crisp pixels */
+  burst(g, [x, y], t, S) {
+    if (t > 0.7) return;
+    const u = t / 0.7, r = (14 + 46 * u) * S / 2, cy = y - 26 * S / 2;
+    g.globalAlpha = 1 - u * u; g.fillStyle = '#fffbe0';
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2 + 0.3, px = Math.round(x + Math.cos(a) * r), py = Math.round(cy + Math.sin(a) * r * 0.7), s = u < 0.5 ? 2 : 1;
+      g.fillRect(px - s, py, s * 2 + 1, 1); g.fillRect(px, py - s, 1, s * 2 + 1);
+    }
+    g.globalAlpha = 1;
   }
   /** lobby: the same grid, lobby palette, no stage */
   drawLobby(dt) {
@@ -330,14 +459,37 @@ export class TitleScreen {
     this.offT = 0; if (this.root.style.display === 'none') this.root.style.display = '';
     if (!this.cssReady) { try { const l = document.getElementById('mt-title-css'); if (l && l.sheet && l.sheet.cssRules.length) this.cssReady = true; } catch { this.cssReady = true; } if (!this.cssReady) return; }
     this.t += dt;
-    const gk = innerWidth + 'x' + innerHeight + '@' + (devicePixelRatio || 1) + (lobby ? 'L' : 'T');
-    if (gk !== this.key) { this.key = gk; this.layoutNow(lobby); }
+    const M = this.app.mtMenu, scr = menu ? (M ? M.screen : 'title') : 'lobby';
+    const kind = lobby ? 'lobby' : scr === 'main' || scr === 'settings' ? 'main' : scr === 'starter' ? 'starter' : 'title';
+    if (kind !== this.kind && this.kind && this.laid) {
+      this.snap();
+      if (kind === 'starter' && M) { this.active = this.prevActive = Math.max(0, M.focus.starter); this.fade = 1; this.spotX = null; }
+    }
+    const gk = innerWidth + 'x' + innerHeight + '@' + (devicePixelRatio || 1) + kind + (kind === 'starter' && M ? ':' + (M.stageBottom | 0) : '');
+    if (gk !== this.key) { this.key = gk; this.layoutNow(kind); }
+    this.fadeSnap(dt);
     if (lobby) { this.drawLobby(dt); return; }
-    const { mode, fam } = this.inputMode();
-    if (!this.texts || this.texts.key !== mode + fam + getLang()) { this.makeTexts(); this.placeDom(); }
-    const menuEl = document.querySelector('.sv-menu');
-    if (menuEl && menuEl !== this.domKey) this.placeDom();
+    if (kind === 'title') {
+      const { mode, fam } = this.inputMode();
+      if (!this.texts || this.texts.key !== mode + fam + getLang()) { this.makeTexts(); this.placeDom(); }
+    }
     this.draw(dt);
+  }
+  /** screen change: the last frame stays on top and fades out (0.25 s) over the new composition */
+  snap() {
+    if (!this.canvas.width) return;
+    let p = this.prevC;
+    if (!p) { p = this.prevC = document.createElement('canvas'); p.className = 'tt-px tt-prev'; this.root.appendChild(p); }
+    p.width = this.canvas.width; p.height = this.canvas.height;
+    const g = p.getContext('2d'); g.imageSmoothingEnabled = false; g.drawImage(this.canvas, 0, 0);
+    Object.assign(p.style, { width: this.canvas.style.width, height: this.canvas.style.height, display: '' });
+    this.snapA = 1; p.style.opacity = '1';
+  }
+  fadeSnap(dt) {
+    const p = this.prevC; if (!p || p.style.display === 'none') return;
+    this.snapA = Math.max(0, (this.snapA || 0) - dt / 0.25);
+    p.style.opacity = this.snapA.toFixed(3);
+    if (this.snapA <= 0) p.style.display = 'none';
   }
   dispose() { if (this.root) this.root.remove(); }
 }

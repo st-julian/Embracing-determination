@@ -14,7 +14,7 @@ function miniCard() {
   const mc = pxCanvas(14, 14), ml = h('b');
   const mon = h('span.mb', null, mc, ml);
   const el = h('div.tm', null, h('span.tb', null, tb), rs, h('span.th', null, th), mon);
-  return { el, tb, th, rs, mon, mc, ml, key: '', mkey: '' };
+  return { el, tb, th, rs, mon, mc, ml, key: '', mkey: null };   // mkey null: the first update always sets the badge (or hides it: no monster yet)
 }
 
 export class TopBar {

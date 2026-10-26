@@ -2,24 +2,30 @@
 //
 // Every peer runs the identical world. A tick T may run only when every peer's inputs for T are known:
 //   * local human commands issued between ticks (UI, pads, touch, legacy controls) are NOT applied: world.command
-//     returns true and they are queued for tick  max(tickNo + D, upTo + 1)  (D = adaptive input delay, 4..9 ticks)
+//     returns true and they are queued for tick  max(tickNo + D, upTo + 1)  (D = adaptive input delay, 2..12 ticks:
+//     2-3 on a good connection; online.js hides the rest with render-only prediction of the local trainer)
 //   * each peer publishes in its room presence  u  (= upTo: "all my commands up to this tick are final"), the window
 //     c  of its commands not yet acknowledged by everyone, and  a  (its acks: the  u  it has received from each slot)
 //   * right before tick T, EVERY peer applies all peers' commands for T in canonical order (slot, issue order) from
 //     their decoded wire form (the sender included), then runs world.tick() with deterministic Math (detmath.js)
 //   * commands issued INSIDE a tick (bot AI, pets) pass through untouched: they happen identically everywhere
 // Drop-tolerant by construction: presence is absolute state, merged monotonically (u / acks only grow), commands stay
-// in the window until every peer acknowledged them.
+// in the window until every peer acknowledged them. The window carries the upTo it was built for in its own header
+// (c[0] = ['h', U, F]: complete for (F, U]) and the receiver takes U from there, never from the separate u key:
+// presence travels as key PATCHES, and a patch lost or applied out of order must never pair a newer u with an older
+// window (that silently dropped a command and desynced the WebRTC net-test once).
 //
 // Also here: per-tick state hash + 2 s checkpoints (desync detection, first diverging tick), adaptive D from measured
-// round trips (ack based), drift pacing (pace() scales the frame accumulator ±8 %), stall accounting, and bot takeover:
+// round trips (ack based) + "you kept me waiting" feedback (wo), catch-up pacing (a peer that fell behind runs up to
+// 2 ticks per frame; nobody slows down for it), stall accounting, and bot takeover:
 // a peer that left / went silent 8 s is announced by the acting host (lowest live slot) as "slot S is a bot from tick
 // T, its last commands end at U" after every live peer stopped reading S (gn) — peers missing commands ≤ U get them
 // from the others' relays (rl).
 //
 // Presence fields written by patch() (named game room; the controller merges lobby fields):
-//   m mid · s slot · u upTo · k tick · c [[tick, ...enc]] · a [ack per slot] · h [tick, hash] · hb heartbeat ·
-//   dl D · w 1 while waiting · gn [gone slots] · bt [[slot, T, U]] (acting host) · rl [[slot, F, U, [[tick, ...enc]]]] ·
+//   m mid · s slot · u upTo · k tick · c [['h', U, F], [tick, ...enc]...] · a [ack per slot] · h [tick, hash] · hb heartbeat ·
+//   dl D · w 1 while waiting · wo bitmask of the slots I am waiting for · aw 1 while my page is hidden (another app) ·
+//   gn [gone slots] · bt [[slot, T, U]] (acting host) · rl [[slot, F, U, [[tick, ...enc]]]] ·
 //   dh [tick0, [hash...]] (after a desync) · x 1 when replaced by a bot
 
 import { encode, decode, COALESCE, REFUSED_FOR_TRAINERS, utf8Len } from './codec.js';
@@ -27,15 +33,19 @@ import { install as detOn, uninstall as detOff } from './detmath.js';
 import { activeUnit } from '../sim/monsters.js';
 
 export const TICK_MS = 1000 / 30;
-export const D_MIN = 4, D_MAX = 9, D_INIT = 6;
+export const D_MIN = 2, D_MAX = 12, D_INIT = 5;
+/** presence publish interval per transport: the claude.ai room coalesces to ~30/s itself; our WebRTC star does not */
+export const LINK_GAP = { room: 33, mock: 33, peer: 16 };
 export const CHECK_EVERY = 60;          // desync checkpoint period (ticks, 2 s)
 const HIST = 900;                       // received commands kept this many ticks (relays)
 const RING = 128;                       // per-tick hashes kept (first diverging tick)
 export const SILENT_MS = 8000;          // presence unchanged (heartbeat included) for this long = gone
+export const AWAY_MS = 20000;           // ... for a peer that said its page went to the background (iPad app switch)
 const SILENT_NEVER_MS = 30000;          // ... for a peer that never showed up in this match (loading)
 const GONE_WAIT_MS = 3000;              // acting host waits this long for every live peer's gn before deciding
 const LEFT_GRACE_MS = 2500;             // missing from the room's peer list this long = left (reconnects are brief)
-const MAX_PER_TICK = 6, WINDOW_BYTES = 2600, MAX_BACKLOG = 0.3;
+const MAX_PER_TICK = 6, WINDOW_BYTES = 2600, MAX_BACKLOG = 0.1;   // backlog: <= 3 ticks after a stall (no bursts)
+const LATE_WINDOW_MS = 2000;            // "you kept me waiting" reports counted over this window -> +1 tick of D
 
 /** cheap per-tick state hash (units, positions 1/256 m, hp 1/16, projectiles); 32-bit base-36 */
 export function fastHash(w) {
@@ -63,6 +73,8 @@ export class NetSession {
    * @param {(w:object)=>string} [o.hash]
    * @param {(w:object, T:number)=>void} [o.onTick]   after every tick (tests: checkpoints)
    * @param {boolean} [o.scriptLocal]  in-tick commands for the LOCAL human unit are local input too (scripted player)
+   * @param {boolean} [o.trace]  keep a field-level snapshot of every unit + the applied commands for the last 128 ticks
+   *                             (desync forensics: traceAt(T); ?nettrace=1 in the game)
    */
   constructor(o) {
     this.world = o.world; this.mid = o.mid; this.seats = o.seats; this.me = o.mySlot;
@@ -81,6 +93,9 @@ export class NetSession {
     this.lastTick = new Array(n).fill(0); this.tickAt = new Array(n).fill(0);
     this.heardAt = new Array(n).fill(this.now()); this.seen = new Array(n).fill(false);
     this.lastPres = new Array(n).fill(null); this.peerSt = new Array(n).fill(''); this.absentSince = new Array(n).fill(-1);
+    this.peerAway = new Array(n).fill(false); this.away = false;   // aw: page hidden (iPad: another app)
+    this.lateAt = []; this.dBonus = 0; this.dBonusAt = 0; this.woSeen = new Array(n).fill(0);
+    this.myLead = new Array(n).fill(0); this.theirLead = new Array(n).fill(null);   // per-slot lead estimates (ld)
     this.rtt = new Array(n).fill(0); this.rttDev = new Array(n).fill(0); this.rttN = new Array(n).fill(0);
     this.pubTimes = new Map();
     this.gone = new Map();                        // slot -> {at, why}
@@ -95,9 +110,12 @@ export class NetSession {
     this.hb = 0; this.hbAt = 0; this.blockedSince = -1; this.waitingFor = [];
     this.leadEw = 0; this.paceV = 1;
     this.stats = { queued: 0, refused: 0, coalesced: 0, applied: 0, ticks: 0, stallMs: 0, liveMs: 0, liveSince: -1, dSum: 0, dN: 0, dMin: 99, dMax: 0,
-      maxStallMs: 0, stalls: 0, presBytes: [], presMax: 0, takeovers: [], firstTickAt: -1 };
+      maxStallMs: 0, stalls: 0, presBytes: [], presMax: 0, takeovers: [], firstTickAt: -1, torn: 0, gaps: 0 };
     this._win = []; this._winBytes = 0;
+    this.trace = o.trace ? new Array(RING).fill(null) : null; this.traceCmds = [];
   }
+  /** desync forensics (o.trace): {T, units: [[id, kind, x, y, hp, alive, order, form, level, bot, facing, state, target, moving]], cmds} */
+  traceAt(T) { const e = this.trace && this.trace[T % RING]; return e && e.T === T ? e : null; }
 
   // ------------------------------------------------------------------------------------------------ helpers
   get tickNo() { return this.world.tickNo; }
@@ -131,7 +149,8 @@ export class NetSession {
     if (this.dead) return false;
     if (REFUSED_FOR_TRAINERS.has(cmd.type) && unit.mtTrainer) return false;   // the router refuses these without side effects
     if (cmd.type === 'monsterAttack' && unit.mtTrainer && this.predictMonsterAttackFails(unit, cmd)) return false; // callers fall back to 'attack'
-    const enc = encode(cmd); if (!enc) { this.stats.refused++; return false; }
+    const enc0 = encode(cmd); if (!enc0) { this.stats.refused++; return false; }
+    const enc = JSON.parse(JSON.stringify(enc0));   // bit-identical to what the others receive (e.g. -0 arrives as 0)
     const target = Math.max(this.world.tickNo + this.D, this.upTo + 1);
     let list = this.out.get(target); if (!list) this.out.set(target, list = []);
     const last = list[list.length - 1];
@@ -171,14 +190,17 @@ export class NetSession {
     if (this.blockedSince >= 0) { const ms = this.now() - this.blockedSince; this.stats.maxStallMs = Math.max(this.stats.maxStallMs, ms); if (ms > 50) this.stats.stalls++; this.blockedSince = -1; }
     detOn();
     try {
-      if (w.ensureGrid) w.ensureGrid();                  // same lazy-grid state on every peer (UI queries may rebuild it)
+      // the spatial grid from the real positions on every peer: between ticks UI queries / the render-only prediction
+      // may have rebuilt it (or marked it dirty) differently on each page; queries before the tick's own rebuild
+      // (commands, preTick hooks, scheduled effects) must see the same cell lists everywhere
+      if (w.grid && w.unitList && w.grid.rebuild) w.grid.rebuild(w.unitList); else if (w.ensureGrid) w.ensureGrid();
       for (const [s, b] of this.bt) if (b.T === T && !this.botSlots.has(s)) this.toBot(w, s);
       this.applying = true;
       for (let s = 0; s < this.n; s++) {
         const list = s === this.me ? this.out.get(T) : this.inbox[s].get(T);
         if (!list || this.botSlots.has(s)) continue;
         const uid = this.slotUnit[s];
-        for (let i = 0; i < list.length; i++) { const c = decode(list[i]); if (c) { w.command(uid, c); this.stats.applied++; } }
+        for (let i = 0; i < list.length; i++) { const c = decode(list[i]); if (c) { const r = w.command(uid, c); this.stats.applied++; if (this.trace) this.traceCmds.push([s, JSON.stringify(c), r]); } }
       }
       this.applying = false;
       this.inTick = true;
@@ -199,6 +221,11 @@ export class NetSession {
   }
   afterTick(w, T) {
     const h = this.hash(w);
+    if (this.trace) {
+      this.trace[T % RING] = { T, h, cmds: this.traceCmds, units: w.unitList.map((u) => [u.id, u.kind, u.x, u.y, u.hp, u.alive ? 1 : 0, u.order ? u.order.type + (u.order.targetId != null ? ':' + u.order.targetId : '') : '',
+        u.mtMon ? u.mtMon.form : '', u.level || 0, u.bot ? 1 : 0, u.facing, u.state || '', u.targetId ?? -1, u.moving ? 1 : 0]) };
+      this.traceCmds = [];
+    }
     this.tickHashes[T % RING] = [T, h];
     if (T % CHECK_EVERY === 0) {
       this.checks.set(T, h);
@@ -209,7 +236,7 @@ export class NetSession {
     if (this.onTick) this.onTick(w, T);
     // prune: own commands executed and acknowledged by every live peer; received commands older than HIST
     const lim = Math.min(this.minAck(), T);
-    for (const t of this.out.keys()) { if (t > lim) break; this.out.delete(t); }
+    for (const t of [...this.out.keys()]) if (t <= lim) this.out.delete(t);   // any order (queued before live: D may shrink)
     const old = T - HIST;
     for (const m of this.inbox) for (const t of m.keys()) { if (t > old) break; m.delete(t); }
     this.refreshUpTo();
@@ -229,13 +256,24 @@ export class NetSession {
     if (p !== this.lastPres[s]) { this.lastPres[s] = p; this.heardAt[s] = at; }
     this.seen[s] = true;
     this.peerSt[s] = typeof p.st === 'string' ? p.st : '';   // 'ld' while that peer is still on the loading screen
+    this.peerAway[s] = p.aw === 1;
+    this.woSeen[s] = p.w === 1 && isInt(p.wo) && ((p.wo >> this.me) & 1) ? 1 : 0;   // that peer is waiting for MY inputs
+    this.theirLead[s] = Array.isArray(p.ld) && Number.isFinite(p.ld[this.me]) ? Math.max(-300, Math.min(300, p.ld[this.me])) : null;
     if (p.x === 1 && !this.gone.has(s)) this.markGone(s, 'replaced');
     if (this.gone.has(s)) return;           // after "gone" nothing more is read from that slot (takeover safety)
     if (okTick(p.k) && p.k !== this.lastTick[s]) { this.lastTick[s] = p.k; this.tickAt[s] = at; }
     const b = this.bt.get(s), cap = b ? b.U : Infinity;
-    if (okTick(p.u) && p.u > this.known[s]) {
-      const lim = Math.min(p.u, cap);
-      if (lim > this.known[s]) { this.accept(s, Array.isArray(p.c) ? p.c : [], this.known[s], lim); this.known[s] = lim; }
+    // the window says itself which upTo it is complete for (c[0] = ['h', U, F]): a u key from a newer patch next to an
+    // older window (patch lost / reordered on the way) must not advance known past what the window holds
+    const hd = Array.isArray(p.c) && Array.isArray(p.c[0]) && p.c[0][0] === 'h' ? p.c[0] : null;
+    const U = hd && okTick(hd[1]) ? hd[1] : -1, F = hd && okTick(hd[2]) ? hd[2] : 0;
+    if (okTick(p.u) && p.u > this.known[s] && U < p.u) this.stats.torn++;
+    if (U > this.known[s]) {
+      if (F > this.known[s]) { this.stats.gaps++; }   // starts after what I have (never expected): wait, never skip a tick
+      else {
+        const lim = Math.min(U, cap);
+        if (lim > this.known[s]) { this.accept(s, p.c, this.known[s], lim); this.known[s] = lim; }
+      }
     }
     if (Array.isArray(p.a)) {
       const a = p.a.map((v) => (okTick(v) ? v : 0)).slice(0, this.n);
@@ -321,6 +359,7 @@ export class NetSession {
    */
   maintain(present) {
     const now = this.now(), w = this.world;
+    const fdt = Math.min(250, Math.max(0, now - (this._mAt ?? now))); this._mAt = now;
     if (this.live && this.stats.liveSince < 0) this.stats.liveSince = now;
     if (now - this.hbAt >= 1000) { this.hb = (this.hb + 1) % 1000; this.hbAt = now; }
     if (this.ended || this.dead) return;
@@ -330,7 +369,7 @@ export class NetSession {
       // the long never-seen limit, e.g. it is still joining the room)
       if (present && !present.has(this.seats[s].peer)) { if (this.absentSince[s] < 0) this.absentSince[s] = now; } else this.absentSince[s] = -1;
       if (this.absentSince[s] >= 0 && now - this.absentSince[s] > (this.seen[s] ? LEFT_GRACE_MS : SILENT_NEVER_MS)) { this.markGone(s, 'left'); continue; }
-      const limit = this.seen[s] && this.peerSt[s] !== 'ld' ? SILENT_MS : SILENT_NEVER_MS;   // loading screens may block a slow device
+      const limit = !this.seen[s] || this.peerSt[s] === 'ld' ? SILENT_NEVER_MS : this.peerAway[s] ? AWAY_MS : SILENT_MS;   // loading screens may block a slow device
       if (this.live && now - this.heardAt[s] > limit) this.markGone(s, 'silent');
     }
     if (this.actingHost() === this.me) {
@@ -346,32 +385,57 @@ export class NetSession {
         this.log('takeover: slot ' + s + ' becomes a bot from tick ' + T + ' (inputs end at ' + U + ')');
       }
     }
-    // adaptive input delay from ack round trips: one way ≈ rtt/2, + 2 deviations, + 2 ticks of publish/consume slack
+    // "you kept me waiting": time any live peer spent blocked on MY inputs -> one more tick of D (decays when quiet)
+    if (this.live) {
+      let waited = false;
+      for (const s of this.aliveOthers()) if (this.woSeen[s]) waited = true;
+      if (fdt > 80) this.hitchAt = now;   // my own frame hitch (busy device): more delay would not have helped
+      if (waited && now - (this.hitchAt || -1e9) > 1000) this.lateAt.push([now, fdt]);
+      while (this.lateAt.length && now - this.lateAt[0][0] > LATE_WINDOW_MS) this.lateAt.shift();
+      let ms = 0; for (const e of this.lateAt) ms += e[1];
+      if (ms > 250 && this.dBonus < 3 && now - this.dBonusAt > LATE_WINDOW_MS) { this.dBonus++; this.dBonusAt = now; this.lateAt.length = 0; this._dAt = 0; }   // > 12 % of the time
+      else if (this.dBonus > 0 && now - this.dBonusAt > 30000 && !this.lateAt.length) { this.dBonus--; this.dBonusAt = now; }   // slow decay: no see-saw
+    }
+    // adaptive input delay from ack round trips: the others need my upTo (= tick + D - 1) before their tick, so
+    // (D - 1) ticks must cover one way (≈ rtt/2, which already holds the publish + frame overhead) + 2 deviations
     if (now - (this._dAt || 0) > 1000) {
       this._dAt = now;
       let need = 0;
-      for (const s of this.aliveOthers()) if (this.rttN[s] >= 3) need = Math.max(need, this.rtt[s] / 2 + 2 * this.rttDev[s]);
+      // (rtt - one frame) / 2: the measured round trip also holds my own pull delay (~1 frame), which the gate does not
+      // wait for (it re-reads the room when blocked); + 2 deviations + 6 ms (frame quantisation); stalls add dBonus
+      for (const s of this.aliveOthers()) if (this.rttN[s] >= 3) need = Math.max(need, Math.max(0, this.rtt[s] - 16) / 2 + 2 * this.rttDev[s] + 6);
       if (need > 0) {
-        const want = Math.max(D_MIN, Math.min(D_MAX, Math.ceil(need / TICK_MS) + 2));
+        const want = Math.max(D_MIN, Math.min(D_MAX, Math.ceil(need / TICK_MS) + 1 + this.dBonus));
         if (want > this.D) { this.D = want; this.dChangedAt = now; }
         else if (want < this.D && now - this.dChangedAt > 3000) { this.D--; this.dChangedAt = now; }
       }
       if (this.live) { this.stats.dSum += this.D; this.stats.dN++; this.stats.dMin = Math.min(this.stats.dMin, this.D); this.stats.dMax = Math.max(this.stats.dMax, this.D); }
     }
-    // drift: how far ahead of the others am I (ticks)? -> pace
+    // drift: how far ahead of the others am I (ticks)? Behind -> catch up (up to 2 ticks per frame); ahead -> barely
+    // slower (the gate holds me anyway): the shared sim never drifts into slow motion to wait for a straggler
+    // lead vs each peer = my tick - its last reported tick advanced by (age + rtt/2); rtt/2 over-estimates one way
+    // (publish + frame overhead), which would make EVERY peer think it is behind and all speed up — so each peer
+    // publishes its per-slot leads (ld) and both sides use the difference: (mine - theirs) / 2, bias-free
     const others = this.aliveOthers();
     if (this.live && others.length && this.stats.ticks > 0) {
       let sum = 0;
-      for (const s of others) sum += this.lastTick[s] + (Math.min(now - this.tickAt[s], 100) + this.rtt[s] / 2) / TICK_MS;
-      const lead = w.tickNo - sum / others.length;
-      this.leadEw += (lead - this.leadEw) * 0.05;
-      const l = Math.abs(this.leadEw) < 0.75 ? 0 : this.leadEw;
-      this.paceV = Math.max(0.92, Math.min(1.08, 1 - 0.03 * l));
+      for (const s of others) {
+        const raw = w.tickNo - (this.lastTick[s] + (Math.min(now - this.tickAt[s], 100) + this.rtt[s] / 2) / TICK_MS);
+        this.myLead[s] = raw;
+        sum += this.theirLead[s] == null ? raw : (raw - this.theirLead[s]) / 2;
+      }
+      const lead = sum / others.length;
+      this.leadEw += (lead - this.leadEw) * 0.15;
+      // within ±1.2 ticks: gentle and symmetric (the one ahead eases off as much as the one behind hurries, so noise
+      // never makes the pair run faster than real time); further behind (a hitch, a busy frame): catch up at up to
+      // 2 ticks per frame; further ahead: never slower than 0.9 (the gate holds me anyway)
+      const l = Math.abs(this.leadEw) < 0.5 ? 0 : this.leadEw;
+      this.paceV = l < -1.2 ? Math.min(2, 1.06 + 0.3 * (-l - 1.2)) : Math.max(0.9, Math.min(1.06, 1 - 0.05 * l));
     } else this.paceV = 1;
     this.refreshUpTo();
   }
   /** [MT-HOOK] netPace: accumulator after `Wk += dt * timeScale` -> drift-corrected, backlog clamped */
-  pace(acc, dt, timeScale = 1) {
+  pace(acc, dt, timeScale = 1, maxBacklog = MAX_BACKLOG) {
     const now = this.now();
     if (this.live && !this.ended && !this.dead) {
       if (this._lastPaceAt != null) { const ms = Math.min(250, now - this._lastPaceAt); this.stats.liveMs += ms; if (this.blockedSince >= 0) this.stats.stallMs += ms; }
@@ -379,23 +443,28 @@ export class NetSession {
     }
     if (!this.live || this.ended) return acc;
     acc += dt * timeScale * (this.paceV - 1);
-    return Math.max(0, Math.min(acc, MAX_BACKLOG * Math.max(1, timeScale)));
+    return Math.max(0, Math.min(acc, maxBacklog * Math.max(1, timeScale)));
   }
   /** a short human-readable reason the gate is closed (UI) */
-  waiting() { return this.blockedSince >= 0 ? { since: this.blockedSince, slots: [...this.waitingFor] } : null; }
+  waiting() { return this.blockedSince >= 0 ? { since: this.blockedSince, slots: [...this.waitingFor], away: this.waitingFor.filter((s) => this.peerAway[s]) } : null; }
 
   // ------------------------------------------------------------------------------------------------ presence out
   /** fields for my presence in the game room (absolute state) */
   patch() {
     const now = this.now();
     this.refreshUpTo();
-    const ma = this.minAck(), win = [];
-    for (const [t, list] of this.out) { if (t <= ma) continue; if (t > this.upTo) break; for (const e of list) win.push([t, ...e]); }
+    const ma = this.minAck(), U = this.live ? this.upTo : 0, F = Math.min(ma, U), win = [['h', U, F]];
+    const ts = []; for (const t of this.out.keys()) if (t > F && t <= U) ts.push(t);
+    ts.sort((x, y) => x - y);
+    for (const t of ts) for (const e of this.out.get(t)) win.push([t, ...e]);
     const a = this.known.slice(); a[this.me] = this.upTo;
-    const p = { m: this.mid, s: this.me, u: this.live ? this.upTo : 0, k: this.world.tickNo, c: win, a, hb: this.hb, dl: this.D };
+    const p = { m: this.mid, s: this.me, u: U, k: this.world.tickNo, c: win, a, hb: this.hb, dl: this.D };
     let last = null; for (const [T, h] of this.checks) last = [T, h];
     p.h = last;
     p.w = this.blockedSince >= 0 ? 1 : 0;
+    if (p.w) { let wo = 0; for (const s of this.waitingFor) if (s < 30) wo |= 1 << s; p.wo = wo; }
+    if (this.live && this.n > 1) p.ld = this.myLead.map((v, s) => (s === this.me ? 0 : Math.round(v * 10) / 10));
+    if (this.away) p.aw = 1;
     if (this.gone.size) p.gn = [...this.gone.keys()];
     if (this.actingHost() === this.me && this.bt.size) p.bt = [...this.bt].map(([s, b]) => [s, b.T, b.U]);
     const rl = [];
@@ -432,7 +501,7 @@ export class NetSession {
       delayMs: Math.round(this.D * TICK_MS), stallPct: st.liveMs > 0 ? +(100 * st.stallMs / st.liveMs).toFixed(2) : 0, stallMs: Math.round(st.stallMs), liveMs: Math.round(st.liveMs),
       maxStallMs: Math.round(st.maxStallMs), stalls: st.stalls, rtt: this.rtt.map((r) => Math.round(r)), pace: +this.paceV.toFixed(3), lead: +this.leadEw.toFixed(2),
       presMax: st.presMax, presP95: pb.length ? pb[Math.floor(pb.length * 0.95)] : 0, queued: st.queued, applied: st.applied, refused: st.refused, coalesced: st.coalesced,
-      ticks: st.ticks, takeovers: st.takeovers.slice(), gone: [...this.gone].map(([s, g]) => ({ slot: s, why: g.why })), desync: this.desync, dead: this.dead, ended: this.ended,
+      ticks: st.ticks, torn: st.torn, gaps: st.gaps, takeovers: st.takeovers.slice(), gone: [...this.gone].map(([s, g]) => ({ slot: s, why: g.why })), desync: this.desync, dead: this.dead, ended: this.ended,
     };
   }
 }
@@ -455,6 +524,18 @@ export class SessionLink {
     this.s = session; this.room = room; this.extra = o.extra || (() => ({})); this.minGap = o.minGapMs ?? 33;
     this.seatOf = new Map(session.seats.map((x, i) => [x.peer, i]));
     this.lastPubAt = -1e9; this.lastSent = {}; this.lastPeers = null; this.present = null; this.pubFails = 0; this.pubCount = 0;
+    this.fno = 0; this.retryFno = -1;
+  }
+  /**
+   * The gate (netGate): session.step, and when it is closed, once per frame, read the room again first — inputs that
+   * arrived after this frame's pull let the tick run now instead of a frame later.
+   */
+  step(w) {
+    if (this.s.step(w)) return true;
+    if (this.retryFno === this.fno || this.s.dead || this.s.desync) return false;
+    this.retryFno = this.fno;
+    this.pull();
+    return this.s.step(w);
   }
   pull() {
     let ps;
@@ -495,5 +576,5 @@ export class SessionLink {
     } catch (e) { this.pubFails++; this.lastSent = {}; this.lastError = String((e && e.code) || e); }
     return true;
   }
-  frame() { this.pull(); this.s.maintain(this.present); this.push(); }
+  frame() { this.fno++; this.pull(); this.s.maintain(this.present); this.push(); }
 }

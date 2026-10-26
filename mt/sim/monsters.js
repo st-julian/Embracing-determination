@@ -91,7 +91,8 @@ export function refreshMonsterStats(mt, u) {
   const frac = u.maxHp > 0 ? u.hp / u.maxHp : 1;
   Object.assign(u.stats, { ad: s.ad, ap: s.ap, armor: s.armor, mr: s.mr, attackSpeed: s.attackSpeed, moveSpeed: s.moveSpeed, attackRange: s.attackRange, lifesteal: s.lifesteal });
   mt.L.snapshotBaseStats(u);
-  u.maxHp = s.hp; u.hp = Math.max(1, Math.min(s.hp, s.hp * frac));
+  const hp = s.hp * (owner && mt.rules ? mt.rules.monsterHpMult(owner) : 1);   // Easy human handicap (rules.js)
+  u.maxHp = hp; u.hp = Math.max(1, Math.min(hp, hp * frac));
   u.radius = f.radius; u.height = f.height; u.name = f.name; u.subtype = f.id;
   u.ranged = LINES[f.line].ranged;
   u.attackFx = 'mt_' + f.line + '_attack'; u.attackElement = LEGACY_ELEMENT[f.line];
@@ -276,6 +277,7 @@ export function cancelEvolution(mt, trainer, rec, reason) {
   const u = unitOf(mt, rec);
   rec.evolving = null;
   if (u && u.mtMon) u.mtMon.evolving = null;
+  if (u && u.mtEvoGuard) { u.mtEvoGuard = false; u.invulnerable = false; }   // safe evolution (progression.js) ended
   mt.emit(mt.E.EVOLVE_CANCEL, {
     trainer: trainer ? trainer.id : -1, team: trainer ? trainer.team : -1, unit: u ? u.id : -1, ...describe(rec),
     reason, refund: true, x: u ? u.x : trainer ? trainer.x : 0, y: u ? u.y : trainer ? trainer.y : 0,
@@ -336,6 +338,11 @@ export function install(mt) {
   mt.on('kill', onKill);
 }
 
+/** Faint timer (s): DESIGN §11 `8 + 1.2 × level` × mode multiplier (rules.js; QUICK is shorter). */
+export function faintTime(mt, owner, level) {
+  return (FAINT.base + FAINT.perLevel * level) * (mt.rules ? mt.rules.faintMult(owner) : 1);
+}
+
 function onKill(mt, victim, killer) {
   if (!isPet(victim)) return;
   const rec = victim.mtMon.rec; if (!rec) return;
@@ -343,11 +350,13 @@ function onKill(mt, victim, killer) {
   if (rec.evolving) cancelEvolution(mt, owner, rec, 'fainted');
   rec.fainted = true; rec.hpFrac = 0;
   rec.faintedAt = w.time;
-  rec.faintUntil = w.time + FAINT.base + FAINT.perLevel * rec.level;
+  rec.faintUntil = w.time + faintTime(mt, owner, rec.level);
   rec.unitId = -1; // the legacy sim removes the corpse 2.5 s later
   victim.mtMon.evolving = null;
   mt.stats.faints++;
-  const k = killer && (killer.mtMon || killer.mtTrainer || killer.name) ? killer : null;
+  // Easy / Normal team-kill credit (rules.js ASSIST.lastHit): the KO counts for the human who fought it
+  const L = mt._lastHit, kk = L && L.victim === victim ? L.to : killer;
+  const k = kk && (kk.mtMon || kk.mtTrainer || kk.name) ? kk : null;
   mt.emit(mt.E.FAINT, {
     trainer: victim.ownerId, team: victim.team, unit: victim.id, ...describe(rec), killer: k ? k.id : -1, killerName: k ? k.name : null,
     until: rec.faintUntil, duration: rec.faintUntil - w.time, x: victim.x, y: victim.y,
@@ -399,7 +408,7 @@ function upkeep(mt) {
       const a = owner.facing + Math.PI; teleportUnit(w, u, owner.x + Math.cos(a) * 1.5, owner.y + Math.sin(a) * 1.5, owner.x, owner.y);
     }
     const regrouping = t < u.mtMon.regroupUntil;
-    u.mtSpeedMul = d > TRAINER.leash || (regrouping && d > 2.5) ? TRAINER.catchupSpeedMult : 1;
+    u.mtSpeedMul = (d > TRAINER.leash || (regrouping && d > 2.5) ? TRAINER.catchupSpeedMult : 1) * (mt.rules ? mt.rules.petSpeedMult(owner) : 1);
     // own fountain heals pets like trainers (legacy updateFountains only handles champions)
     const fo = FOUNTAINS[u.team];
     if (fo && u.hp < u.maxHp && dist2(u.x, u.y, fo.x, fo.y) < (fo.radius + 3) * (fo.radius + 3)) u.hp = Math.min(u.maxHp, u.hp + u.maxHp * 0.084 * DT);
@@ -434,20 +443,25 @@ function enemyOf(mt, pet, u, allowWild) {
 
 /** Choose the pet's target this tick (or null = follow). */
 function pickTarget(mt, pet, owner) {
-  const w = mt.world, M = pet.mtMon, t = w.time;
+  const w = mt.world, M = pet.mtMon, t = w.time, R = mt.rules;
   if (t < M.regroupUntil) return null;
+  // capture window (rules.js): hold the attacks on a weakened wild monster my trainer can catch
+  const held = (u) => !!(R && u && u.mtHold && R.holdFor(pet, u));
+  // difficulty (rules.js ASSIST.focusHuman): an enemy bot's monster does not auto-pick a HUMAN trainer on Easy
+  const shy = (u) => !!(R && u && u.mtTrainer && owner.bot && R.focusHuman(pet.team, u) < 0.5);
   // 1. explicit focus
   if (M.focusId >= 0) {
     const f = w.units.get(M.focusId);
-    if (t < M.focusUntil && enemyOf(mt, pet, f, true)) return f;
+    if (t < M.focusUntil && enemyOf(mt, pet, f, true) && !held(f)) return f;
     M.focusId = -1;
   }
   // 2. what the trainer is attacking (incl. structures and wild monsters)
   const oid = owner.order && owner.order.type === 'attack' ? owner.order.targetId : owner.lastAttackT > t - 2.5 ? owner.lastAttackTargetId : -1;
-  if (oid >= 0) { const o = w.units.get(oid); if (enemyOf(mt, pet, o, true) && dist(o.x, o.y, owner.x, owner.y) < OWNER_GUARD + 4) return o; }
+  if (oid >= 0) { const o = w.units.get(oid); if (enemyOf(mt, pet, o, true) && !held(o) && dist(o.x, o.y, owner.x, owner.y) < OWNER_GUARD + 4) return o; }
   // 3. keep current target if still sensible
   const cur = pet.targetId >= 0 ? w.units.get(pet.targetId) : null;
-  if (cur && enemyOf(mt, pet, cur, cur.team === TEAM.NEUTRAL) && dist(cur.x, cur.y, owner.x, owner.y) < OWNER_GUARD + 2 && !mt.L.isStructure(cur)) {
+  if (cur && held(cur)) { pet.targetId = -1; if (pet.attackWindupEnd > 0 && pet.attackTargetId === cur.id) mt.L.cancelAttack(w, pet, false); }
+  else if (cur && enemyOf(mt, pet, cur, cur.team === TEAM.NEUTRAL) && dist(cur.x, cur.y, owner.x, owner.y) < OWNER_GUARD + 2 && !mt.L.isStructure(cur) && !shy(cur)) {
     if ((w.tickNo + pet.phase) % SCAN_EVERY !== 0) return cur;
   } else if ((w.tickNo + pet.phase) % SCAN_EVERY !== 0 && !cur) {
     // between scans, no target: only re-scan on the scan tick
@@ -457,14 +471,14 @@ function pickTarget(mt, pet, owner) {
   for (const src of [owner, pet]) {
     if (src.lastHitTime > t - 2 && src.lastDamagedBy >= 0) {
       const a = w.units.get(src.lastDamagedBy);
-      if (enemyOf(mt, pet, a, true) && !mt.L.isStructure(a) && dist(a.x, a.y, owner.x, owner.y) < OWNER_GUARD + 3) return a;
+      if (enemyOf(mt, pet, a, true) && !mt.L.isStructure(a) && !held(a) && !shy(a) && dist(a.x, a.y, owner.x, owner.y) < OWNER_GUARD + 3) return a;
     }
   }
   // 5. nearest enemy (no structures, no wild monsters) near the pet and the trainer
   let best = null, bd = 1e9;
   const list = w.queryUnits(pet.x, pet.y, AGGRO, null, mt._scan || (mt._scan = []));
   for (const u of list) {
-    if (!enemyOf(mt, pet, u, false) || mt.L.isStructure(u)) continue;
+    if (!enemyOf(mt, pet, u, false) || mt.L.isStructure(u) || shy(u)) continue;
     if (dist2(u.x, u.y, owner.x, owner.y) > OWNER_GUARD * OWNER_GUARD) continue;
     // prefer champions/monsters over minions slightly
     const d = dist2(pet.x, pet.y, u.x, u.y) * (u.kind === KIND.MINION ? 1.4 : 1);

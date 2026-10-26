@@ -74,7 +74,9 @@ function makeDebug(mt) {
     setup(name, opts = {}) {
       const a = appRef();
       if (opts.fresh !== false && a && a.world === w && a.newMatch) {
-        a.newMatch({ seed: opts.seed ?? 7, players: opts.players || (a.mt && a.mt.roster('trainer', null, { humans: opts.humans ?? 1 })) });
+        // fixtures set every party themselves: no starter monsters (roster starters:false); match options = the game
+        // defaults (mt/data/options.js) unless opts.options is given
+        a.newMatch({ seed: opts.seed ?? 7, players: opts.players || (a.mt && a.mt.roster('trainer', null, { humans: opts.humans ?? 1, starters: false })), options: opts.options });
         return a.world.mt.debug.setup(name, { ...opts, fresh: false });
       }
       const S = SCENARIOS[name]; if (!S) throw new Error('unknown mt scenario ' + name + ' (have: ' + Object.keys(SCENARIOS).join(', ') + ')');
@@ -92,7 +94,7 @@ function makeDebug(mt) {
     fx(name, opts = {}) {
       const a = appRef();
       if (opts.fresh !== false && a && a.world === w && a.newMatch) {
-        a.newMatch({ seed: opts.seed ?? 7, players: a.mt && a.mt.roster('trainer', null, { humans: 1 }) });
+        a.newMatch({ seed: opts.seed ?? 7, players: a.mt && a.mt.roster('trainer', null, { humans: 1, starters: false }), options: opts.options });
         return a.world.mt.debug.fx(name, { ...opts, fresh: false });
       }
       const info = fxLab(mt, D, { structure, player }, name, opts);

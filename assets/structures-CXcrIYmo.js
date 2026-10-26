@@ -55,6 +55,43 @@ import {
 } from "./index-DHK-Ptzs.js";
 import { o as H } from "./height-CVtQdZ3e.js";
 import { r as le } from "./BufferGeometryUtils-ZZwUU_DG.js";
+import { structuresBoot as __mtStructuresBoot } from "../mt/render/loadtime.js"; // [MT-HOOK] structuresBoot import (mt/render/loadtime.js)
+var ENV_WIN_GLSL = `
+// (env r6) SEE-THROUGH WINDOW over the local player's own units (iPad playtest #3: the fountain statue swallowed the
+// trainer at spawn / respawn and the whole evolution, a lamp hid the evolved monster, the own Nexus crystal swallowed
+// the trainer). For every focus unit (local trainers, their monsters and whoever is fighting them; filled per frame by
+// the structures system) a structure fragment standing IN FRONT of the unit, above its feet, inside a soft capsule
+// around its body (feet to head, measured in the unit's own depth plane, so every surface along one view ray agrees)
+// is left out of the opaque pass and redrawn by a blended copy of the mesh at down to 25 % opacity: a smooth ghosted
+// window, no outline, no dither. uEnvOn = this mesh's copy is live (no hole is ever cut without its ghost).
+uniform vec4 uEnvFoc[8];     // x, ground y, z, body height (m)
+uniform float uEnvFocK[8];   // eased weight 0..1 (0 = unused slot)
+uniform float uEnvOn;
+float envFocWin(vec3 W) {
+  float cov = 1.0;
+  if (uEnvOn < 0.5) return cov;
+  vec3 cR = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+  vec3 cU = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+  vec3 cF = -vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
+  vec3 d = W - cameraPosition; float zW = dot(d, cF);
+  if (zW < 0.3) return cov;
+  vec2 sY = vec2(cR.y, cU.y);
+  for (int i = 0; i < 8; i++) {
+    float k = uEnvFocK[i]; if (k < 0.01) continue;
+    vec4 o = uEnvFoc[i];
+    if (W.y < o.y + 0.3) continue;                     // floors, pools and kerbs at the unit's feet stay solid
+    vec3 B = vec3(o.x, o.y + o.w * 0.5, o.z) - cameraPosition; float zB = dot(B, cF);
+    if (zW > zB - 0.15) continue;                      // only what stands in front of the unit
+    vec2 p = vec2(dot(d, cR), dot(d, cU)) * (zB / zW);
+    vec2 b = vec2(dot(B, cR), dot(B, cU));
+    vec2 a0 = b - sY * (o.w * 0.5 - 0.1), ab = sY * max(o.w - 0.2, 0.1);
+    float dd = length(p - (a0 + ab * clamp(dot(p - a0, ab) / dot(ab, ab), 0.0, 1.0)));
+    float f = (1.0 - smoothstep(0.55, 1.45, dd)) * smoothstep(o.y + 0.3, o.y + 0.7, W.y);
+    cov = min(cov, 1.0 - 0.75 * k * f);
+  }
+  return cov;
+}
+`;
 var ue = (e) => new C(e);
 function de(e) {
   let t = {};
@@ -823,7 +860,9 @@ vec4 svMason(vec3 p, vec3 n, vec4 st, vec3 sc, float px) {
   float e = min(de.x, de.y);
   // ROUND 7 (critic minor, "an ordered checkerboard stipple on the polished light stone"): a per-PIXEL jitter of ±0.3 px on
   // the joint distance, so whatever survives the band limit below quantises to noise instead of to a regular dot matrix
-  e += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * 0.6 * px;
+  // (env r6) keyed to pixel-sized cells of the SURFACE, not to the screen: a screen-locked jitter boils along every joint
+  // while the camera moves (iPad "glitchy while playing")
+  { vec3 jq = floor(p / max(px, 1e-4)); e += (fract(sin(dot(jq, vec3(12.9898, 78.233, 37.719))) * 43758.5453) - 0.5) * 0.6 * px; }
   float mortar = 0.018 + 0.006 * svH2(cell + 3.1);
   float seam = 1.0 - smoothstep(mortar - px * 0.8, mortar + px * 0.8, e);
   // BAND LIMIT BY BLOCK PERIOD. px widens the seam's transition but does nothing about the pattern's own frequency:
@@ -894,24 +933,43 @@ function Te(e) {
 ` +
           Ce +
           `
-varying float vMat; varying vec3 vObjP; varying vec3 vObjN; varying vec4 vSt; varying vec3 vSc; varying vec4 vDet; varying vec4 vDet2;`,
+varying float vMat; varying vec3 vObjP; varying vec3 vObjN; varying vec4 vSt; varying vec3 vSc; varying vec4 vDet; varying vec4 vDet2; varying vec3 vEnvW;`,
       )
       .replace(
         `#include <beginnormal_vertex>`,
         `vec3 objectNormal = vec3( normal ); vec3 svP = vec3( position ); svXform( svP, objectNormal ); vMat = aMat; vObjP = position; vObjN = normal; vSt = aSt; vSc = aSc; vDet = aDet; vDet2 = aDet2;`,
       )
-      .replace(`#include <begin_vertex>`, `vec3 transformed = svP;`)),
+      .replace(`#include <begin_vertex>`, `vec3 transformed = svP;
+{ vec4 envWp = vec4(transformed, 1.0);
+#ifdef USE_INSTANCING
+  envWp = instanceMatrix * envWp;
+#endif
+  vEnvW = (modelMatrix * envWp).xyz; }`)),
     (e.fragmentShader = e.fragmentShader
+      .replace(
+        `#include <opaque_fragment>`,
+        `#include <opaque_fragment>
+#ifdef ENV_OVERLAY
+gl_FragColor.a = envCov;
+#endif`,
+      )
       .replace(
         `#include <common>`,
         `#include <common>
+varying vec3 vEnvW;
 ` +
           Se +
-          we,
+          we + ENV_WIN_GLSL,
       )
       .replace(
         `#include <color_fragment>`,
         `
+      float envCov = envFocWin(vEnvW);
+      #ifdef ENV_OVERLAY
+      if (envCov > 0.996 || envCov < 0.012) discard;
+      #else
+      if (envCov < 0.996) discard;
+      #endif
       #include <color_fragment>
       float mStone = 1.0 - step(0.5, vMat);
       float mMetal = step(0.5, vMat) * (1.0 - step(1.5, vMat));
@@ -1468,6 +1526,8 @@ var ke = class {
         (this.filiU = { value: n || e }),
         (this.photo = be()),
         xe(this.photo),
+        (this.envFoc = { value: Array.from({ length: 8 }, () => new j(0, 0, 0, 0)) }),
+        (this.envFocK = { value: new Float32Array(8) }),
         (this.fxBlend = {
           blending: 5,
           blendEquation: 100,
@@ -1553,9 +1613,12 @@ var ke = class {
         uLiqShallow: { value: f.shallow.clone() },
         uLiqDeep: { value: f.deep.clone() },
         uLiqFoam: { value: f.foam.clone() },
+        uEnvFoc: this.envFoc,
+        uEnvFocK: this.envFocK,
+        uEnvOn: G(0),
       }),
         (c.onBeforeCompile = Te),
-        (c.customProgramCacheKey = () => `sv-structure-body-9`));
+        (c.customProgramCacheKey = () => `sv-structure-body-11`));
       let g = new R();
       return (
         (g.userData.u = m),
@@ -1617,6 +1680,9 @@ var ke = class {
           uVein: G(u ?? (m ? 1 : 0.3)),
           uRimK: G(d ?? (m ? 0.3 : 0.8)),
           uCrust: G(f ?? 0.72),
+          uEnvFoc: this.envFoc,
+          uEnvFocK: this.envFocK,
+          uEnvOn: G(0),
         },
         _ = new b({
           uniforms: g,
@@ -1701,6 +1767,7 @@ void main() {
 #include <common>
 #include <fog_pars_fragment>
 ${Se}
+${ENV_WIN_GLSL}
 uniform vec3 uCore; uniform vec3 uMid; uniform vec3 uEdge; uniform vec3 uShell; uniform vec3 uEmber; uniform vec3 uVeil; uniform vec3 uSunDir;
 uniform float uTime; uniform float uCharge; uniform float uFlash; uniform float uDead; uniform float uHpLow; uniform float uIntensity; uniform float uShellGlow; uniform float uGemGain;
 uniform sampler2D uAdapt; uniform float uAE; uniform float uCurve; uniform float uSpec; uniform float uHeart; uniform float uHeartK; uniform float uHeartW; uniform float uHeartC;
@@ -1721,6 +1788,12 @@ float svVein(vec3 p) {
 }
 float svBlade(vec3 q, vec3 a) { float s = dot(q, a); vec3 p = q - a * s; return exp(-dot(p, p) * 900.0 - s * s * 20.0); }
 void main() {
+  float envCov = envFocWin(vWP);
+  #ifdef ENV_OVERLAY
+  if (envCov > 0.996 || envCov < 0.012) discard;
+  #else
+  if (envCov < 0.996) discard;
+  #endif
   vec3 N = normalize(vN); vec3 V = normalize(cameraPosition - vWP);
   float ndv = clamp(abs(dot(N, V)), 0.0, 1.0); float fr = 1.0 - ndv;
   // ⚠ ROUND 5. The key term was 0.2 + 0.92 * lit over the RAW half-lambert, a 5.6× swing that swallowed the facet
@@ -1994,6 +2067,9 @@ void main() {
   col = mix(col, shell, uDead);
   gl_FragColor = vec4(col, 1.0);
   #include <fog_fragment>
+  #ifdef ENV_OVERLAY
+  gl_FragColor.a = envCov;
+  #endif
 }
 `,
   Ne = `
@@ -13030,6 +13106,30 @@ var Kn = (e, t, n) => {
         this.crysM && this.crysM.mat.dispose());
     }
   };
+// (env r6) the blended copy of a structure material for the see-through window (same uniforms, same shader hooks,
+// ENV_OVERLAY defined): drawn after the scene's FX, never writes depth, keeps the destination alpha (material tags)
+function envOvMat(m) {
+  let ud = m.userData;
+  m.userData = {};
+  let o = m.clone();
+  ((m.userData = ud), (o.userData = ud));
+  m.isShaderMaterial ? (o.uniforms = m.uniforms) : ((o.onBeforeCompile = m.onBeforeCompile));
+  let key = m.customProgramCacheKey ? m.customProgramCacheKey() : ``;
+  return (
+    (o.customProgramCacheKey = () => key + `|envov`),
+    (o.defines = Object.assign({}, m.defines || {}, { ENV_OVERLAY: `` })),
+    (o.transparent = !0),
+    (o.depthWrite = !1),
+    (o.blending = 5),
+    (o.blendEquation = 100),
+    (o.blendEquationAlpha = 100),
+    (o.blendSrc = 204),
+    (o.blendDst = 205),
+    (o.blendSrcAlpha = 200),
+    (o.blendDstAlpha = 201),
+    o
+  );
+}
 function or(e, t) {
   let n = t && t.post && t.post.exposurePass,
     r = n ? n.texture : null;
@@ -13091,6 +13191,7 @@ var sr = (t) =>
           this.disposed || this.clearViews();
         }),
         e.app.on(`match`, this._onMatch));
+      __mtStructuresBoot(this); // [MT-HOOK] structuresBoot: tower / inhibitor / nexus models built at boot, not in the first title frame
     }
     lodScale() {
       return this.quality === `high` ? 1 : 0.55;
@@ -13248,12 +13349,72 @@ var sr = (t) =>
       }
       let p = this.decor;
       for (let t = 0; t < p.length; t++) p[t].update(e, u);
+      this._envWin(e, n, r);
       let m = this.ctx.registry,
         h = m && m.get ? m.get(`hud`) : null,
         g = this.ctx.renderer ? this.ctx.renderer.domElement : null;
       (this.ring.update(e, e.dt, this.fxTime, h, g),
         this.particles.flush(),
         this.decals.flush());
+    }
+    // (env r6) see-through window (ENV_WIN_GLSL): pick the focus units, ease them in / out, and keep a blended copy of
+    // every body / crystal mesh the window can touch. Render-only (reads the world, never writes it).
+    _envWin(e, w, app) {
+      let sh = this.shared, F = sh.envFoc.value, K = sh.envFocK.value, st = (this._envSt ||= new Map()),
+        dt = Math.min(0.1, Math.max(0, e.dt || 0)), al = e.alpha ?? 1,
+        loc = app && app.locals && app.locals.length ? app.locals.map((l) => l.unitId) : [e.playerId],
+        want = (this._envWant ||= new Map()),
+        sees = app && typeof app.mtSees == `function` ? (u) => app.mtSees(u) : () => !0,
+        ok = (u) => u && u.alive && (u.kind === `champion` || u.kind === `monster` || u.kind === `minion`);
+      want.clear();
+      let add = (u, own) => { want.size < 8 && ok(u) && !want.has(u.id) && (own || sees(u)) && want.set(u.id, u); };
+      for (let id of loc) add(w.units.get(id), !0);
+      for (let u of w.unitList) u.mtMon && loc.includes(u.mtMon.ownerId) && add(u, !0);
+      let mine = [...want.keys()];
+      for (let id of mine) { let u = w.units.get(id); u && u.targetId >= 0 && add(w.units.get(u.targetId)); }
+      if (want.size < 8) for (let u of w.unitList) if (u.targetId >= 0 && mine.includes(u.targetId)) add(u);
+      for (let v of st.values()) v.on = 0;
+      for (let [id, u] of want) { let v = st.get(id) || { k: 0 }; ((v.on = 1), (v.u = u), st.set(id, v)); }
+      let i = 0, pts = (this._envPts ||= []);
+      pts.length = 0;
+      for (let [id, v] of st) {
+        ((v.k += (v.on - v.k) * (1 - Math.exp(-dt * 9))), dt <= 0 && (v.k = v.on));
+        if ((!v.on && v.k < 0.01) || !v.u || !v.u.alive) { st.delete(id); continue; }
+        if (i >= 8) continue;
+        let u = v.u, x = u.prevX + (u.x - u.prevX) * al, z = u.prevY + (u.y - u.prevY) * al,
+          hb = u.kind === `champion` ? 1.75 : u.kind === `minion` ? 1.1 : 1.6, gy = this.heightAt(x, z);
+        (F[i].set(x, gy, z, hb), (K[i] = v.k), pts.push(x, gy + hb * 0.5, z), i++);
+      }
+      for (; i < 8; i++) K[i] = 0;
+      let cam = this.ctx.camera || (this.ctx.pipeline && this.ctx.pipeline.camera), meshes = (this._envMeshes ||= []);
+      meshes.length = 0;
+      for (let v of this.views.values()) meshes.push(v.body, v.crystal);
+      for (let d of this.decor) meshes.push(d.body, d.crystal);
+      let c = this._envC || (this._envC = new M()), q = this._envQ || (this._envQ = new M());
+      for (let m of meshes) {
+        if (!m) continue;
+        let live = !1, bs = m.geometry && m.geometry.boundingSphere;
+        if (pts.length && cam && bs && m.visible && m.parent && m.parent.visible) {
+          (m.updateWorldMatrix(!0, !1), c.copy(bs.center).applyMatrix4(m.matrixWorld));
+          let r = bs.radius * m.matrixWorld.getMaxScaleOnAxis() + 1.7;
+          for (let j = 0; j < pts.length && !live; j += 3) {
+            // the window lives inside the cone from the camera to the unit's body: test the sphere against that segment
+            q.set(pts[j], pts[j + 1], pts[j + 2]).sub(cam.position);
+            let L2 = q.lengthSq(), t = L2 > 0 ? Math.max(0, Math.min(1, (c.x - cam.position.x) * q.x / L2 + (c.y - cam.position.y) * q.y / L2 + (c.z - cam.position.z) * q.z / L2)) : 0,
+              dx = cam.position.x + q.x * t - c.x, dy = cam.position.y + q.y * t - c.y, dz = cam.position.z + q.z * t - c.z;
+            live = dx * dx + dy * dy + dz * dz < r * r;
+          }
+        }
+        let ov = m.userData.envOv, um = m.material && (m.material.userData.u || m.material.uniforms);
+        if (live && (!ov || ov.userData.base !== m.material)) {
+          ov && (ov.parent && ov.parent.remove(ov), ov.material.dispose());
+          ov = m.userData.envOv = new P(m.geometry, envOvMat(m.material));
+          ((ov.userData.base = m.material), (ov.renderOrder = 30), (ov.castShadow = !1), (ov.receiveShadow = m.receiveShadow),
+            (ov.matrixAutoUpdate = !1), ov.matrix.copy(m.matrix), m.parent.add(ov));
+        }
+        ov && ((ov.visible = live), (ov.geometry = m.geometry), live && ov.matrix.copy(m.matrix), ov.matrixWorldNeedsUpdate = !0);
+        um && um.uEnvOn && (um.uEnvOn.value = live ? 1 : 0);
+      }
     }
     dispose() {
       this.disposed = !0;

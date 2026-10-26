@@ -536,7 +536,7 @@ float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00
     `
 uniform sampler2D tDepth; uniform mat4 uProj; uniform mat4 uInvProj; uniform vec2 uTexel; // full-res texel
 uniform float uRadius; uniform float uIntensity; uniform float uBias; uniform float uMaxPx; uniform float uPower;
-uniform float uFarScale; uniform float uFarWeight;
+uniform float uFarScale; uniform float uFarWeight; uniform mat4 uViewInv;
 ivec2 gMax;
 vec3 vposT(ivec2 t) {
   t = clamp(t, ivec2(0), gMax); float d = texelFetch(tDepth, t, 0).r; vec2 uv = (vec2(t) + 0.5) * uTexel;
@@ -552,7 +552,13 @@ void main() {
   vec3 dx = abs(L.z - C.z) < abs(R.z - C.z) ? C - L : R - C;
   vec3 dy = abs(D.z - C.z) < abs(U.z - C.z) ? C - D : U - C;
   vec3 N = normalize(cross(dx, dy));
-  float rot = ign(gl_FragCoord.xy) * 6.2831853;
+  // (env r6, iPad "glitchy while playing") the sample-set rotation is anchored to the WORLD (a 5 cm cell grid on the
+  // surface), not to the screen: a screen-space noise slides under the moving scene and the occlusion boils on every
+  // crease while the camera follows the trainer.
+  vec3 Wp = (uViewInv * vec4(C, 1.0)).xyz;
+  vec3 Nw = abs(mat3(uViewInv) * N);
+  vec2 wq = Nw.y > 0.7 ? Wp.xz : Nw.x > Nw.z ? Wp.zy : Wp.xy;
+  float rot = ign(floor(wq * 20.0)) * 6.2831853;
   vec2 rad = vec2(uProj[0][0], uProj[1][1]) * 0.5 * uRadius / -C.z;
   // screen-space clamp per ring (the wide ring would otherwise blow past uMaxPx first and lose its falloff calibration)
   float px = rad.y / uTexel.y;
@@ -1856,6 +1862,7 @@ var q = class extends M {
             uPower: H(1),
             uFarScale: H(2.4),
             uFarWeight: H(0.4),
+            uViewInv: { value: new j() },
           },
           { SAMPLES: 12, TURNS: `7.0` },
         )),
@@ -1888,6 +1895,7 @@ var q = class extends M {
       ((r.tDepth.value = t.sceneRT.depthTexture),
         r.uProj.value.copy(t.camera.projectionMatrix),
         r.uInvProj.value.copy(t.camera.projectionMatrixInverse),
+        r.uViewInv.value.copy(t.camera.matrixWorld),
         r.uTexel.value.set(1 / this.full[0], 1 / this.full[1]),
         (r.uRadius.value = n.aoRadius),
         (r.uIntensity.value = n.aoIntensity),

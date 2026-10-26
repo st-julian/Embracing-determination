@@ -49,7 +49,7 @@ body:not(.mt-touch) .sv-joystick, body:not(.mt-touch) .sva-root, body:not(.mt-to
 #mt-hud .bar.low > .fl { background: linear-gradient(180deg, var(--hp-rl) 0, var(--hp-rl) 1px, var(--hp-r) 1px); }
 #mt-hud .bar.xp { height: 3px; background: #2b3160; border-radius: 1px; }
 #mt-hud .bar.xp > .fl { background: linear-gradient(180deg, var(--xp-l) 0, var(--xp-l) 1px, var(--xp) 1px); }
-#mt-hud .bar.hit { animation: mtHit .25s steps(2) 1; }
+#mt-hud .bar.dmg { animation: mtHit .25s steps(2) 1; }
 @keyframes mtHit { 50% { filter: brightness(1.8); } }
 #mt-hud .hpl { display: flex; align-items: center; gap: 2px; }
 #mt-hud .hpl > .lab { font: 10px/10px var(--pxb); color: var(--gold); background: var(--navy); border-radius: 2px; padding: 0 2px; height: 8px; line-height: 8px; font-size: 10px; margin-top: -1px; transform: none; }
@@ -70,35 +70,35 @@ body:not(.mt-touch) .sv-joystick, body:not(.mt-touch) .sva-root, body:not(.mt-to
 #mt-hud .gp.sh.trig { border-radius: 4px 4px 2px 2px; }
 
 /* ---------------------------------------------------------------- ability buttons (shared language) */
-#mt-hud .ab { position: relative; width: 30px; height: 30px; border-radius: 6px; background: var(--navy); border: 1px solid #0d1230;
+#mt-hud .mt-ab { position: relative; width: 30px; height: 30px; border-radius: 6px; background: var(--navy); border: 1px solid #0d1230;
   box-shadow: inset 0 0 0 1px #5c6bb8, 0 2px 0 rgba(14, 18, 44, .55), 0 3px 5px rgba(14, 18, 44, .3); pointer-events: auto; }
-#mt-hud .ab > canvas.ic { position: absolute; left: 1px; top: 1px; width: 26px; height: 26px; border-radius: 4px; }
-#mt-hud .ab > .cd { position: absolute; inset: 1px; border-radius: 4px; opacity: 0;
+#mt-hud .mt-ab > canvas.ic { position: absolute; left: 1px; top: 1px; width: 26px; height: 26px; border-radius: 4px; }
+#mt-hud .mt-ab > .cd { position: absolute; inset: 1px; border-radius: 4px; opacity: 0;
   background: conic-gradient(rgba(10, 14, 38, .72) calc(var(--p, 0) * 1turn), rgba(10, 14, 38, 0) 0); }
-#mt-hud .ab.cool > .cd { opacity: 1; }
-#mt-hud .ab > .num { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font: 20px/20px var(--pxb); color: #fff;
+#mt-hud .mt-ab.cool > .cd { opacity: 1; }
+#mt-hud .mt-ab > .num { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font: 20px/20px var(--pxb); color: #fff;
   text-shadow: 1px 0 0 #0d1230, -1px 0 0 #0d1230, 0 1px 0 #0d1230, 0 -1px 0 #0d1230, 0 2px 0 #0d1230; opacity: 0; }
-#mt-hud .ab.cool > .num { opacity: 1; }
-#mt-hud .ab > .key { position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%); }
-#mt-hud .ab.cool > canvas.ic { filter: saturate(.6) brightness(.92); }
-#mt-hud .ab.lock > canvas.ic { opacity: 0; }
-#mt-hud .ab.lock { background: repeating-linear-gradient(135deg, #2a3466 0 3px, #222b58 3px 6px); }
-#mt-hud .ab.lock::before { content: ''; position: absolute; left: 50%; top: 7px; width: 8px; height: 6px; margin-left: -4px; border: 2px solid #8e9ad0; border-bottom: 0; border-radius: 4px 4px 0 0; }
-#mt-hud .ab.lock::after { content: attr(data-lv); position: absolute; left: 50%; top: 12px; transform: translateX(-50%); min-width: 14px; height: 9px; padding: 0 1px; border-radius: 2px; background: #8e9ad0; color: #1b2350; font: 10px/9px var(--pxb); text-align: center; }
-#mt-hud .ab.sm.lock::before, #mt-hud .ab.xs.lock::before { top: 3px; } #mt-hud .ab.sm.lock::after, #mt-hud .ab.xs.lock::after { top: 7px; }
-#mt-hud .ab.off > canvas.ic { filter: grayscale(.7) brightness(.75); }
-#mt-hud .ab.off { opacity: .8; }
+#mt-hud .mt-ab.cool > .num { opacity: 1; }
+#mt-hud .mt-ab > .key { position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%); }
+#mt-hud .mt-ab.cool > canvas.ic { filter: saturate(.6) brightness(.92); }
+#mt-hud .mt-ab.lock > canvas.ic { opacity: 0; }
+#mt-hud .mt-ab.lock { background: repeating-linear-gradient(135deg, #2a3466 0 3px, #222b58 3px 6px); }
+#mt-hud .mt-ab.lock::before { content: ''; position: absolute; left: 50%; top: 7px; width: 8px; height: 6px; margin-left: -4px; border: 2px solid #8e9ad0; border-bottom: 0; border-radius: 4px 4px 0 0; }
+#mt-hud .mt-ab.lock::after { content: attr(data-lv); position: absolute; left: 50%; top: 12px; transform: translateX(-50%); min-width: 14px; height: 9px; padding: 0 1px; border-radius: 2px; background: #8e9ad0; color: #1b2350; font: 10px/9px var(--pxb); text-align: center; }
+#mt-hud .mt-ab.sm.lock::before, #mt-hud .mt-ab.xs.lock::before { top: 3px; } #mt-hud .mt-ab.sm.lock::after, #mt-hud .mt-ab.xs.lock::after { top: 7px; }
+#mt-hud .mt-ab.off > canvas.ic { filter: grayscale(.7) brightness(.75); }
+#mt-hud .mt-ab.off { opacity: .8; }
 #mt-hud .mon.empty .abs { display: none; }
-#mt-hud .ab.ready { box-shadow: inset 0 0 0 1px #8ea0ff, 0 2px 0 rgba(14, 18, 44, .55), 0 3px 5px rgba(14, 18, 44, .3); }
-#mt-hud .ab.flash { animation: mtReady .45s ease-out 1; }
+#mt-hud .mt-ab.ready { box-shadow: inset 0 0 0 1px #8ea0ff, 0 2px 0 rgba(14, 18, 44, .55), 0 3px 5px rgba(14, 18, 44, .3); }
+#mt-hud .mt-ab.flash { animation: mtReady .45s ease-out 1; }
 @keyframes mtReady { 0% { box-shadow: inset 0 0 0 1px #fff, 0 0 0 3px rgba(255, 255, 255, .9); } 100% { box-shadow: inset 0 0 0 1px #8ea0ff, 0 0 0 9px rgba(255, 255, 255, 0); } }
-#mt-hud .ab.press { transform: translateY(1px); }
-#mt-hud .ab.sm { width: 20px; height: 20px; border-radius: 5px; }
-#mt-hud .ab.sm > canvas.ic { width: 16px; height: 16px; border-radius: 3px; }
-#mt-hud .ab.sm > .num { font: 10px/10px var(--pxb); }
-#mt-hud .ab.sm > .key { bottom: -5px; }
-#mt-hud .ab.sm > .cd { border-radius: 3px; }
-#mt-hud .ab.evo { background: linear-gradient(#ffe36a, #f0a800); border-color: #7a4c00; box-shadow: inset 0 0 0 1px #fff3b0, 0 2px 0 rgba(90, 50, 0, .6), 0 0 0 0 rgba(255, 214, 60, .8);
+#mt-hud .mt-ab.press { transform: translateY(1px); }
+#mt-hud .mt-ab.sm { width: 20px; height: 20px; border-radius: 5px; }
+#mt-hud .mt-ab.sm > canvas.ic { width: 16px; height: 16px; border-radius: 3px; }
+#mt-hud .mt-ab.sm > .num { font: 10px/10px var(--pxb); }
+#mt-hud .mt-ab.sm > .key { bottom: -5px; }
+#mt-hud .mt-ab.sm > .cd { border-radius: 3px; }
+#mt-hud .mt-ab.evo { background: linear-gradient(#ffe36a, #f0a800); border-color: #7a4c00; box-shadow: inset 0 0 0 1px #fff3b0, 0 2px 0 rgba(90, 50, 0, .6), 0 0 0 0 rgba(255, 214, 60, .8);
   animation: mtEvo 1.1s ease-in-out infinite; }
 @keyframes mtEvo { 50% { box-shadow: inset 0 0 0 1px #fff3b0, 0 2px 0 rgba(90, 50, 0, .6), 0 0 0 4px rgba(255, 214, 60, .0), 0 0 10px 3px rgba(255, 220, 80, .85); transform: translateY(-1px); } }
 
@@ -189,7 +189,7 @@ body:not(.mt-touch) .sv-joystick, body:not(.mt-touch) .sva-root, body:not(.mt-to
 #mt-hud .slot.lc .trn .down { left: auto; right: 2px; top: 1px; width: 40px; }
 #mt-hud .slot.lc .trn .acts { left: 49px; top: 43px; bottom: auto; gap: 4px; }
 #mt-hud .dock.n4 .slot.lc .trn .acts { left: 37px; gap: 2px; }
-#mt-hud .dock.n4 .slot.lc .acts .ab:not(:first-child) .key { display: none; }
+#mt-hud .dock.n4 .slot.lc .acts .mt-ab:not(:first-child) .key { display: none; }
 #mt-hud .slot.lc .mon { position: absolute; inset: 0; display: block; }
 #mt-hud .slot.lc .mon .info { position: absolute; left: 0; top: 0; width: 100%; height: 30px; padding: 4px 4px 0 30px; background: none; border: 0; box-shadow: none; }
 #mt-hud .slot.lc .mon .por { left: 3px; top: 4px; width: 26px; height: 26px; border-radius: 5px; }
@@ -207,11 +207,11 @@ body:not(.mt-touch) .sv-joystick, body:not(.mt-touch) .sva-root, body:not(.mt-to
 #mt-hud .slot.lc .mon .status { left: 30px; right: 3px; top: 3px; height: 24px; flex-wrap: wrap; gap: 0 3px; }
 #mt-hud .slot.lc .mon.empty .status { left: 3px; top: 3px; bottom: auto; height: 26px; }
 #mt-hud .slot.lc .bench { display: none; }
-#mt-hud .ab.xs { width: 18px; height: 18px; border-radius: 4px; }
-#mt-hud .ab.xs > canvas.ic { width: 14px; height: 14px; border-radius: 3px; }
-#mt-hud .ab.xs > .num { font: 10px/10px var(--pxb); }
-#mt-hud .ab.xs > .cd { border-radius: 3px; }
-#mt-hud .ab.xs > .key { bottom: -6px; transform: translateX(-50%) scale(1); }
+#mt-hud .mt-ab.xs { width: 18px; height: 18px; border-radius: 4px; }
+#mt-hud .mt-ab.xs > canvas.ic { width: 14px; height: 14px; border-radius: 3px; }
+#mt-hud .mt-ab.xs > .num { font: 10px/10px var(--pxb); }
+#mt-hud .mt-ab.xs > .cd { border-radius: 3px; }
+#mt-hud .mt-ab.xs > .key { bottom: -6px; transform: translateX(-50%) scale(1); }
 #mt-hud .slot.lc .acts .sw { position: relative; right: auto; top: auto; }
 
 /* ---------------------------------------------------------------- top bar */
@@ -299,10 +299,10 @@ body:not(.mt-touch) .sv-joystick, body:not(.mt-touch) .sva-root, body:not(.mt-to
 #mt-hud .se.nve { color: #cfd3e6; font-size: 10px; text-shadow: 1px 0 0 #2a2f50, -1px 0 0 #2a2f50, 0 1px 0 #2a2f50, 0 -1px 0 #2a2f50; }
 @keyframes mtSE { 0% { opacity: 0; transform: translateX(-50%) scale(.5); } 15% { opacity: 1; transform: translateX(-50%) scale(1.15); } 25% { transform: translateX(-50%) scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateX(-50%) translateY(-8px); } }
 #mt-hud .toasts { position: absolute; left: 50%; bottom: 70px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 2px; }
-#mt-hud .toast { padding: 2px 5px; border-radius: 3px; background: #1b2350; color: var(--cream); border: 1px solid #0d1230; font: 10px/10px var(--px);
+#mt-hud .mt-toast { padding: 2px 5px; border-radius: 3px; background: #1b2350; color: var(--cream); border: 1px solid #0d1230; font: 10px/10px var(--px);
   box-shadow: 0 1px 0 rgba(0, 0, 0, .4); white-space: nowrap; animation: mtToast 1.8s ease forwards; display: flex; gap: 3px; align-items: center; }
-#mt-hud .toast.warn { background: #a42419; }
-#mt-hud .toast.ask { background: linear-gradient(#ffe36a, #f5b400); color: #4a2a00; border-color: #7a4c00; animation-duration: 3s; }
+#mt-hud .mt-toast.warn { background: #a42419; }
+#mt-hud .mt-toast.ask { background: linear-gradient(#ffe36a, #f5b400); color: #4a2a00; border-color: #7a4c00; animation-duration: 3s; }
 @keyframes mtToast { 0% { opacity: 0; transform: translateY(4px); } 10% { opacity: 1; transform: none; } 85% { opacity: 1; } 100% { opacity: 0; } }
 
 /* trainer-down veil */
@@ -515,14 +515,14 @@ body .sva-root { display: none !important; }
 /* juicy in-game feedback */
 #mt-hud .bar > .fl { transition: transform .16s ease-out; }
 #mt-hud .bar.xp > .fl { transition: transform .45s cubic-bezier(.3, 1.3, .5, 1); }
-#mt-hud .ab.used { animation: mtUsed .32s ease-out 1; }
+#mt-hud .mt-ab.used { animation: mtUsed .32s ease-out 1; }
 @keyframes mtUsed { 0% { transform: scale(.84); filter: brightness(2); } 55% { transform: scale(1.07); } 100% { transform: none; } }
 #mt-hud .mon .info { overflow: visible; }
 #mt-hud .mon .info::after { content: ''; position: absolute; inset: 0; border-radius: 5px; pointer-events: none;
   background: linear-gradient(105deg, transparent 42%, rgba(255, 255, 255, .55) 50%, transparent 58%) no-repeat; background-size: 260% 100%; background-position: 160% 0;
   animation: mtIdleShine 7s ease-in-out 2s infinite; }
 @keyframes mtIdleShine { 0%, 84% { background-position: 160% 0; } 100% { background-position: -60% 0; } }
-#mt-hud .ab.ready:not(.cool):not(.off) > canvas.ic { animation: mtBreath 2.4s ease-in-out infinite; }
+#mt-hud .mt-ab.ready:not(.cool):not(.off) > canvas.ic { animation: mtBreath 2.4s ease-in-out infinite; }
 @keyframes mtBreath { 50% { filter: brightness(1.12) saturate(1.1); } }
 #mt-hud .vr.vh .hi { position: relative !important; display: inline-block; vertical-align: middle; }
 #mt-hud .vr.vh > span { display: flex; justify-content: flex-end; align-items: center; }
@@ -558,9 +558,9 @@ body .sva-root { display: none !important; }
    whole HUD px (hud.js layout). Left: joystick zone above a compact bottom-left card; right: free for the touch button
    cluster (input layer, app.mtTouch) or, without it, the HUD's fallback cluster (.tpad). Every tap target >= --tap. */
 #mt-hud { --sal: 0px; --sat: 0px; --sar: 0px; --sab: 0px; --tap: 36px; }
-#mt-hud .hit { display: none; }
-#mt-hud.touch .hit { display: block; position: absolute; left: 50%; top: 50%; z-index: 4; width: max(100%, var(--tap)); height: max(100%, var(--tap)); transform: translate(-50%, -50%); pointer-events: auto; }
-#mt-hud.touch .ab > .key { display: none; }
+#mt-hud .mt-tap { display: none; }
+#mt-hud.touch .mt-tap { display: block; position: absolute; left: 50%; top: 50%; z-index: 4; width: max(100%, var(--tap)); height: max(100%, var(--tap)); transform: translate(-50%, -50%); pointer-events: auto; }
+#mt-hud.touch .mt-ab > .key { display: none; }
 /* top-left: Menu / Scores */
 #mt-hud.touch .tbtns { display: flex; left: calc(6px + var(--sal)); top: calc(6px + var(--sat)); gap: 12px; }
 #mt-hud .tbtns .tbn { width: var(--tbn, 24px); height: var(--tbn, 24px); padding: 0; justify-content: center; border-radius: 6px; border-color: #0d1230; background: linear-gradient(#3d4c96, #1b2350);
@@ -612,15 +612,15 @@ body .sva-root { display: none !important; }
 /* fallback cluster (bottom-right, only while app.mtTouch is not active): A1 A2 + capture big, the rest small, >= --tap apart */
 #mt-hud .tpad { display: none; }
 #mt-hud.touch.tfb .tpad { display: block; position: absolute; right: calc(8px + var(--sar)); bottom: calc(8px + var(--sab)); width: 124px; height: 124px; pointer-events: none; }
-#mt-hud .tpad .ab { position: absolute; pointer-events: auto; }
-#mt-hud .tpad .ab[data-tp="a1"] { right: 9px; bottom: 9px; }
-#mt-hud .tpad .ab[data-tp="a2"] { right: 49px; bottom: 5px; }
-#mt-hud .tpad .ab[data-tp="capture"] { right: 7px; bottom: 49px; }
-#mt-hud .tpad .ab[data-tp="swap"] { right: 90px; bottom: 8px; }
-#mt-hud .tpad .ab[data-tp="skill"] { right: 50px; bottom: 46px; }
-#mt-hud .tpad .ab[data-tp="potion"] { right: 12px; bottom: 90px; }
-#mt-hud .tpad .ab[data-tp="recall"] { right: 86px; bottom: 44px; }
-#mt-hud .tpad .ab.press { transform: translateY(1px) scale(.94); }
+#mt-hud .tpad .mt-ab { position: absolute; pointer-events: auto; }
+#mt-hud .tpad .mt-ab[data-tp="a1"] { right: 9px; bottom: 9px; }
+#mt-hud .tpad .mt-ab[data-tp="a2"] { right: 49px; bottom: 5px; }
+#mt-hud .tpad .mt-ab[data-tp="capture"] { right: 7px; bottom: 49px; }
+#mt-hud .tpad .mt-ab[data-tp="swap"] { right: 90px; bottom: 8px; }
+#mt-hud .tpad .mt-ab[data-tp="skill"] { right: 50px; bottom: 46px; }
+#mt-hud .tpad .mt-ab[data-tp="potion"] { right: 12px; bottom: 90px; }
+#mt-hud .tpad .mt-ab[data-tp="recall"] { right: 86px; bottom: 44px; }
+#mt-hud .tpad .mt-ab.press { transform: translateY(1px) scale(.94); }
 /* modals: everything tappable, >= --tap */
 #mt-hud.touch .modal.clear { pointer-events: auto; }
 #mt-hud.touch .pause { width: 268px; }
@@ -656,7 +656,7 @@ body .sva-root { display: none !important; }
 #mt-hud.touch .banner, #mt-hud.touch .toasts { left: var(--gapc, 50%); }
 #mt-hud.touch .bn { max-width: var(--gapw, 320px); }
 #mt-hud.touch .bn .h2 { white-space: normal; line-height: 10px; }
-#mt-hud.touch .toast { max-width: var(--gapw, 320px); white-space: normal; line-height: 10px; }
+#mt-hud.touch .mt-toast { max-width: var(--gapw, 320px); white-space: normal; line-height: 10px; }
 
 /* ---- victory round 4: one centred hero composition over the live scene (victory.js) */
 #mt-hud .end2 { background: transparent; }
@@ -699,3 +699,82 @@ body .sva-root { display: none !important; }
 #mt-hud .slot.lc .mon.empty .status { flex-wrap: nowrap; flex-direction: column; justify-content: center; align-items: center; gap: 2px; overflow: hidden; white-space: nowrap; padding: 0 2px; }
 #mt-hud .slot.lc .mon.empty .status .l2 { display: inline-flex; align-items: center; gap: 2px; }
 #mt-hud .slot.lc .mon.empty .status .gp, #mt-hud .slot.lc .mon.empty .status .gk { flex: none; }
+
+/* ---- playtest fixes: "which monster is mine", refusals, locked moves */
+/* "yours" chevron + local-colour ring on the active monster's portrait (the same chevron floats over that monster) */
+#mt-hud .mon .mine { position: absolute; left: 13px; top: -21px; width: 9px; height: 7px; z-index: 3; animation: mtMine 1.6s ease-in-out infinite; }
+#mt-hud .mon.empty .mine, #mt-hud .mon.tagon .mine { display: none; }
+@keyframes mtMine { 50% { transform: translateY(-1px); } }
+#mt-hud .mon .por { box-shadow: 0 0 0 2px var(--lc, #3fb64a), inset 0 0 0 1px #fff, inset 0 -3px 0 rgba(0, 0, 0, .12), 0 3px 0 rgba(14, 18, 44, .45); }
+#mt-hud .slot.lc .mon .por { box-shadow: 0 0 0 1px var(--lc, #3fb64a), inset 0 0 0 1px #fff; }
+#mt-hud .slot.lc .mon .mine { left: 22px; top: 1px; animation: none; }
+/* a refused command: a tiny note next to the controls (hud.js deny), one at a time */
+#mt-hud .mt-deny { position: absolute; z-index: 6; padding: 2px 5px 1px 4px; border-radius: 3px; background: rgba(27, 35, 80, .92); border: 1px solid #0d1230; color: #ffe1db;
+  font: 10px/10px var(--px); white-space: nowrap; pointer-events: none; opacity: 0; box-shadow: 0 1px 0 rgba(0, 0, 0, .35); }
+#mt-hud .mt-deny::before { content: ''; display: inline-block; width: 5px; height: 5px; margin-right: 3px; border-radius: 1px; background: #ef5243; vertical-align: 1px; }
+#mt-hud .mt-deny.ctr { transform: translateX(-50%); }
+#mt-hud .mt-deny.on { animation: mtDeny 1.4s ease-out forwards; }
+@keyframes mtDeny { 0% { opacity: 0; margin-bottom: -3px; } 12% { opacity: 1; margin-bottom: 0; } 75% { opacity: 1; } 100% { opacity: 0; } }
+#mt-hud .mt-ab.shake, #mt-hud .mon.shake { animation: mtShake .32s ease-out 1; }
+@keyframes mtShake { 20% { transform: translateX(-2px); } 40% { transform: translateX(2px); } 60% { transform: translateX(-1px); } 80% { transform: translateX(1px); } }
+/* locked moves read as locked: dimmed lock tile with the unlock level, never tappable */
+#mt-hud .mt-ab.lock { opacity: .78; filter: saturate(.55); box-shadow: inset 0 0 0 1px #3d4a80, 0 1px 0 rgba(14, 18, 44, .4); }
+#mt-hud .mt-ab.lock > .mt-tap { pointer-events: none; }
+#mt-hud .tpad .mt-ab.lock { pointer-events: none; }
+
+/* ---------------------------------------------------------------- LOADING (loading.js) — replaces the legacy screen */
+body.mt-loadui .sv-loading { visibility: hidden !important; }
+#mt-hud .mt-load { position: absolute; inset: 0; z-index: 20; pointer-events: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  padding: calc(6px + var(--sat)) calc(10px + var(--sar)) calc(6px + var(--sab)) calc(10px + var(--sal)); overflow: hidden; color: var(--cream); animation: mtLdIn .3s ease-out both; }
+#mt-hud .mt-load.out { animation: mtLdOut .36s ease-in forwards; }
+@keyframes mtLdIn { 0% { opacity: 0; } }
+@keyframes mtLdOut { to { opacity: 0; } }
+#mt-hud .mt-load .lbg { position: absolute; inset: 0; z-index: -1;
+  background: radial-gradient(ellipse 65% 42% at 50% 27%, rgba(59, 134, 242, .34), rgba(59, 134, 242, 0) 72%),
+    radial-gradient(ellipse 65% 42% at 50% 73%, rgba(239, 82, 67, .28), rgba(239, 82, 67, 0) 72%),
+    linear-gradient(#202a5c, #0e1230); }
+#mt-hud .mt-load .lh { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+#mt-hud .mt-load .lt { position: relative; padding: 3px 14px 2px; }
+#mt-hud .mt-load .lt::before { content: ''; position: absolute; inset: 0; z-index: -1; background: linear-gradient(#3d4c96 0, #3d4c96 1px, #2a3672 1px, #1b2350 100%);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 6px) 50%, 100% 100%, 0 100%, 6px 50%); }
+#mt-hud .mt-load .lt span { font: 20px/20px var(--pxb); color: #ffd23a; white-space: nowrap;
+  text-shadow: 1px 0 0 #5a2400, -1px 0 0 #5a2400, 0 1px 0 #5a2400, 0 -1px 0 #5a2400, 0 2px 0 #3a1400; }
+#mt-hud .mt-load .lm { padding: 1px 5px 0; height: 11px; border-radius: 3px; background: var(--cream); color: var(--ink); border: 1px solid var(--navy); font: 10px/10px var(--px); }
+#mt-hud .mt-load .lrow { display: flex; gap: 6px; justify-content: center; }
+#mt-hud .mt-load .lcard { width: 124px; padding: 0; overflow: hidden; animation: mtLdCard .45s cubic-bezier(.2, 1.3, .4, 1) both; animation-delay: calc(var(--i) * 70ms); }
+@keyframes mtLdCard { 0% { opacity: 0; transform: translateY(8px); } }
+#mt-hud .mt-load .lcard.me { box-shadow: 0 0 0 2px var(--lc, #ffd23a), inset 0 0 0 1px #fff, 0 2px 0 rgba(14, 18, 44, .45); }
+#mt-hud .mt-load .lnm { display: flex; align-items: center; gap: 3px; height: 13px; padding: 1px 4px 0; color: #fff; font: 10px/10px var(--pxb); white-space: nowrap; overflow: hidden; }
+#mt-hud .mt-load .lcard.a .lnm { background: linear-gradient(90deg, var(--ally), var(--ally-d)); }
+#mt-hud .mt-load .lcard.e .lnm { background: linear-gradient(90deg, var(--enemy), var(--enemy-d)); }
+#mt-hud .mt-load .lme { margin-left: auto; padding: 0 3px; height: 9px; border-radius: 2px; background: var(--lc, #ffd23a); color: #10142e; font: 10px/9px var(--pxb); }
+#mt-hud .mt-load .lbody { display: flex; align-items: flex-end; justify-content: center; gap: 4px; height: 42px; padding-bottom: 1px; background: linear-gradient(#fffdf6, #efe6cf); }
+#mt-hud .mt-load .ltr { width: 32px; height: 32px; border-radius: 4px; overflow: hidden; border: 1px solid var(--navy); background: linear-gradient(#e6eeff, #c4d2f4); }
+#mt-hud .mt-load .lcard.e .ltr { background: linear-gradient(#ffeee8, #f4cfc6); }
+#mt-hud .mt-load .ltr canvas { width: 30px; height: 30px; display: block; }
+#mt-hud .mt-load .lmo { position: relative; width: 41px; height: 41px; border-radius: 50%; overflow: hidden; border: 1px solid var(--navy);
+  background: radial-gradient(circle at 50% 38%, #fff 0, var(--tc-l, #dfe6ff) 52%, var(--tc, #8aa) 100%); }
+#mt-hud .mt-load .lmo canvas { position: absolute; left: 0; top: 0; width: 40px; height: 40px; }
+#mt-hud .mt-load .lmi { display: flex; align-items: center; gap: 3px; height: 14px; padding: 1px 4px 0; border-top: 1px solid #d8ccb0; color: var(--ink); font: 10px/10px var(--px); white-space: nowrap; overflow: hidden; }
+#mt-hud .mt-load .lmn { font-family: var(--pxb); }
+#mt-hud .mt-load .llv { color: var(--ink2); }
+#mt-hud .mt-load .lmi .ty { margin-left: auto; flex: none; }
+#mt-hud .mt-load .lvs { display: flex; align-items: center; gap: 6px; width: min(386px, 90%); }
+#mt-hud .mt-load .lvs i { flex: 1; height: 2px; background: linear-gradient(90deg, rgba(255, 210, 58, 0), #ffd23a 50%, rgba(255, 210, 58, 0)); }
+#mt-hud .mt-load .lvs b { font: 20px/20px var(--pxb); color: #ffd23a; text-shadow: 1px 0 0 #1b2350, -1px 0 0 #1b2350, 0 1px 0 #1b2350, 0 -1px 0 #1b2350, 0 2px 0 #0d1230; animation: mtLdVs 1.2s ease-in-out infinite; }
+@keyframes mtLdVs { 50% { transform: scale(1.08); } }
+#mt-hud .mt-load .lf { display: flex; flex-direction: column; gap: 4px; width: min(386px, 100%); margin-top: 2px; }
+#mt-hud .mt-load .ltip { display: flex; gap: 4px; align-items: flex-start; font: 10px/11px var(--px); color: #e8ecff; }
+#mt-hud .mt-load .ltip b { flex: none; padding: 0 3px; height: 11px; border-radius: 2px; background: #ffd23a; color: var(--navy); font: 10px/11px var(--pxb); }
+#mt-hud .mt-load .lbar { display: flex; align-items: center; gap: 6px; }
+#mt-hud .mt-load .ltrack { position: relative; flex: 1; height: 7px; background: #0d1230; border: 1px solid #4d5ba6; border-radius: 2px; overflow: hidden; }
+#mt-hud .mt-load .ltrack i { position: absolute; inset: 0; transform-origin: 0 0; transform: scaleX(0); transition: transform .2s linear;
+  background: linear-gradient(var(--xp-l) 0, var(--xp-l) 1px, var(--xp) 1px); }
+#mt-hud .mt-load .lpct { width: 26px; text-align: right; font: 10px/10px var(--pxb); color: var(--cream); }
+/* victory: touch buttons >= 56 CSS px (victory.js sets --vbh), stats legend */
+#mt-hud.touch .vbtns2 .vbtn { height: var(--vbh, 28px); min-width: calc(var(--vbh, 28px) * 2.4); padding: 0 12px; }
+#mt-hud.touch .vbtns2 .vbtn.primary { min-width: calc(var(--vbh, 28px) * 4); }
+#mt-hud .end2 .vleg { margin-top: 4px; padding: 2px 3px 0; border-top: 1px solid #d8ccb0; font: 10px/11px var(--px); color: var(--ink2); white-space: normal; }
+#mt-hud .mt-load .lmo.none { background: radial-gradient(circle at 50% 38%, #fff 0, #e6e0d0 60%, #c9c1a8 100%); display: flex; align-items: center; justify-content: center; }
+#mt-hud .mt-load .lmo.none canvas.orb { position: static; width: 20px; height: 20px; opacity: .55; }
+#mt-hud .mt-load .lst { position: absolute; inset: 0; background-repeat: repeat; background-size: 48px 40px; image-rendering: pixelated; }

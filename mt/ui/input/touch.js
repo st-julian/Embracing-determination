@@ -34,6 +34,7 @@ const AIM_PX = 84;            // px of drag for full range
 const RECALL_HOLD = 0.5, TARGET_HOLD = 0.55, PING_HOLD = 0.5;
 const SWORD = '<svg viewBox="0 0 24 24" width="46%" height="46%"><path d="M4 20l5-5M6.5 17.5l-3-3M14 4h6v6L10 20l-6-6z" fill="#fffaf0" stroke="#1b2350" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/></svg>';
 const TARGET_SVG = '<svg viewBox="0 0 24 24" width="56%" height="56%"><circle cx="12" cy="12" r="7.5" fill="none" stroke="#1b2350" stroke-width="2.6"/><path d="M12 1.5v5M12 17.5v5M1.5 12h5M17.5 12h5" stroke="#d2382a" stroke-width="2.6" stroke-linecap="round"/><circle cx="12" cy="12" r="2.2" fill="#d2382a"/></svg>';
+const LOCK_SVG = '<svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 10 0v3" fill="none" stroke="#1b2350" stroke-width="3.2"/><path d="M7 11V8a5 5 0 0 1 10 0v3" fill="none" stroke="#fffaf0" stroke-width="1.4"/><rect x="4.5" y="10.5" width="15" height="11" rx="2.5" fill="#ffd23a" stroke="#1b2350" stroke-width="2"/><circle cx="12" cy="15.6" r="1.7" fill="#1b2350"/></svg>';
 const REGROUP_SVG = '<svg viewBox="0 0 24 24" width="56%" height="56%"><path d="M12 3a9 9 0 1 0 9 9" fill="none" stroke="#1b2350" stroke-width="2.6" stroke-linecap="round"/><path d="M21 3v6h-6" fill="none" stroke="#1b2350" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="#3fb64a" stroke="#1b2350" stroke-width="1.6"/></svg>';
 
 const el = (tag, cls, parent, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; if (parent) parent.appendChild(e); return e; };
@@ -79,7 +80,7 @@ export class TouchControls {
   build() {
     const r = this.root = el('div', null, document.body); r.id = 'mt-touch';
     this.joyEl = el('div', 'joy mt-hudmask', r); this.knob = el('div', 'knob', this.joyEl); this.arrow = el('div', 'arrow', this.joyEl);
-    this.chance = el('div', 'chance', r); this.chlab = el('div', 'chlab', r);
+    this.chance = el('div', 'chance', r); this.chlab = el('div', 'chlab', r); this.lkChip = el('div', 'chlab lkchip', r); this.lkT = -1;
     const mk = (name, size, opts = {}) => {
       const b = el('div', 'tb ' + size + (opts.cls ? ' ' + opts.cls : ''), opts.parent || r);
       b.dataset.tb = name;
@@ -87,6 +88,7 @@ export class TouchControls {
       if (opts.svg) { rec.glyph = el('span', 'glyph', b, opts.svg); } else { rec.ic = document.createElement('canvas'); rec.ic.className = 'ic'; b.insertBefore(rec.ic, rec.cd); }
       if (opts.text) { rec.glyph = el('span', 'glyph', b, opts.text); }
       if (opts.aim) { rec.aimr = el('i', 'aimr', b); rec.aimk = el('i', 'aimk', b); }
+      rec.lk = el('span', 'lk', b, LOCK_SVG);
       b.addEventListener('pointerdown', (e) => this.btnDown(rec, e));
       b.addEventListener('pointermove', (e) => this.btnMove(rec, e));
       b.addEventListener('pointerup', (e) => this.btnUp(rec, e, false));
@@ -277,10 +279,21 @@ export class TouchControls {
   setLock(id) { this.lockId = id; const a = this.aimState(); if (a) a.lockId = id; }
 
   // ------------------------------------------------------------------ buttons
+  /** a tap on a locked move: a quiet chip above it (「しんかで かいほう」) instead of a refusal toast */
+  lockedTap(b) {
+    this.app.fire('touchlocked', { button: b.name });
+    const r = b.el.getBoundingClientRect(), c = this.lkChip;
+    setTxt(c, t('touch.locked'));
+    c.style.left = Math.round(Math.min(innerWidth - 70, Math.max(70, r.left + r.width / 2))) + 'px'; c.style.top = Math.round(r.top - 6) + 'px';
+    setCls(c, 'on', true); this.lkT = this.time + 1.8;
+  }
   btnDown(b, e) {
     e.preventDefault(); e.stopPropagation();
     if (e.pointerType === 'touch') this.noteTouch();
     if (b.pid != null) return; // already held by another finger
+    // unusable buttons (locked move, nothing to swap to, no monster, trainer down) do nothing — no press, no refusal toast
+    const cl = b.el.classList;
+    if (cl.contains('lock') || cl.contains('off') || cl.contains('hidden')) { if (cl.contains('lock')) this.lockedTap(b); return; }
     b.pid = e.pointerId; b.t0 = this.time; b.dragged = false; b.cancel = false; b.fired = false;
     try { b.el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     setCls(b.el, 'down', true);
@@ -399,6 +412,7 @@ export class TouchControls {
   // ------------------------------------------------------------------ frame
   update(f) {
     const dt = Math.min(0.1, f.dt || 0); this.time += dt;
+    if (this.lkT >= 0 && this.time > this.lkT) { this.lkT = -1; setCls(this.lkChip, 'on', false); }
     if (!this.root) return;
     const lk = globalThis.__mtI18n && globalThis.__mtI18n.getLang ? globalThis.__mtI18n.getLang() : '';
     if (lk !== this.langKey) this.relabel();
@@ -417,12 +431,21 @@ export class TouchControls {
     if (!show) { this.chanceOff(); return; }
     const w = f.world, me = this.me(); if (!w || !me) return;
     this.holds();
-    this.drive(f, me, dt);
+    if (this.drove) this.drove = false; else this.drive(f, me, dt); // [load/hitch] normally driven by early(), before the sim ticks
     this.refresh(w, me, w.time);
     this.chanceRing(f, w, me);
     // lock upkeep
     if (this.lockId >= 0) { const u = w.units.get(this.lockId); if (!u || !u.alive || Math.hypot(u.x - me.x, u.y - me.y) > 16 || (u.visible && u.visible[me.team] === false)) this.setLock(-1); }
     const a = this.aimState(); if (a && this.app.mtInputMode === 'touch') a.lockId = this.lockId;
+  }
+
+  /** [load/hitch] app.mtInputEarly (GamepadInput.early, before the frame's sim ticks): the joystick order goes out now
+   *  instead of after the ticks in update() — one frame less touch -> move latency. */
+  early(dt) {
+    this.drove = false;
+    if (!this.root || !this.vis || this.modal()) return;
+    const me = this.me(); if (!me) return;
+    this.drive(null, me, dt); this.drove = true;
   }
 
   /** joystick -> 'dir' orders (analog, camera-relative, leashed) */
@@ -466,6 +489,7 @@ export class TouchControls {
     this.setIcon(B.skill, SPEC_ICON[T.spec] || 'trainer/rally');
     this.cd(B.skill, now, T.cdEnd.skill, (A[3] && A[3].cdTotal) || SPEC_SKILL_CD, { off: !rec || !alive });
     this.cd(B.potion, now, T.cdEnd.potion, (S[0] && S[0].cdTotal) || TRAINER.potion.cooldown, { off: !rec || !alive });
+    setCls(B.swap.el, 'hidden', !bench); // nothing to swap to: no button (it appears with the second monster)
     this.cd(B.swap, now, T.cdEnd.swap, (S[1] && S[1].cdTotal) || TRAINER.swapCooldown, { off: !bench || bench.fainted || !alive || !!T.swap });
     this.cd(B.target, now, 0, 1, { off: !alive });
     setCls(B.target.el, 'on', this.lockId >= 0);

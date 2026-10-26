@@ -18,6 +18,11 @@
 // (lobbyRoster), app.newMatch({seed, players}) and state 'loading'. Slots persist for Play Again (un-readied).
 // Audio: a pad press tries AudioContext.resume() (counts as activation in some browsers); otherwise a banner asks for
 // one key press / click, which the audio subsystem's own gesture listeners use to start.
+// Front-end flow (mt/ui/menu.js, built here; it gets the 'menu' state's keys and pads from this module):
+//   main menu "Play solo"   -> starter -> startSolo(): one human + bots, straight to 'loading' (Play again = same again)
+//   "With a friend" / ?join -> starter -> openFriend(): the lobby in its online room view (one tap created / joined)
+//   "Same screen"           -> openLocal(): this pad-join lobby (each card has a starter row)
+// Every match gets `starter` on each human entry and app.newMatch(..., options: {difficulty, mode}) (menu-prefs.js).
 
 import { SPECS, SPEC_IDS, TEAM_SIZE } from '../data/balance.js';
 import { lobbyRoster } from '../sim/roster.js';
@@ -25,12 +30,16 @@ import { BTN, PadState, glyphFamily, kindLabel, rumblePattern } from './input/de
 import { unlockAudio } from './input/gamepad.js';
 import { SLOT_COLORS, SLOT_DARK } from './input/localPlayers.js';
 import { loadWasdPref, saveWasdPref } from './input/keyboard.js';
-import { t, getLang, nextLang, onLangChange, LANG_LABEL, specName } from '../i18n/index.js'; // i18n: every lobby string + language row
+import { t, getLang, nextLang, onLangChange, LANG_LABEL, specName, formName } from '../i18n/index.js'; // i18n: every lobby string + language row
 import { HeroStage, heroFrames } from './stage.js';
-import { TRAINER_CRISP, LOBBY_SCALES } from './artspec.js';
+import { TRAINER_CRISP, LOBBY_SCALES, TITLE_CRISP, TITLE_FRAMES, TITLE_SCALES } from './artspec.js';
 import { vsPixels } from './logo.js';
 import { glyphCanvas, fontReady } from './pixeltext.js';
 import { CODE_ALPHABET, normCode } from '../net/transport.js'; // online play (mt/net): room codes
+import { FrontMenu, triEl } from './menu.js'; // front-end flow: title -> main menu -> starter (state 'menu')
+import { Guide } from './guide.js'; // in-game objective line + arrow (first minutes)
+import { STARTERS, STARTER_TYPE, DIFFICULTIES, MODES, prefs, savePrefs, matchOptions, cycle, viewMode } from './menu-prefs.js';
+import { qrCanvas } from './menu-qr.js'; // the invite link as a pixel QR code
 
 const LOOKS = { attack: () => t('look.attack'), healing: () => t('look.healing'), magic: () => t('look.magic') }; // i18n
 const SPEC_ICON = { attack: 'trainer/rally', healing: 'trainer/mend', magic: 'trainer/surge' };
@@ -68,13 +77,14 @@ const CSS = `
 #mt-lobby *{font-weight:400!important;font-style:normal!important;letter-spacing:0!important;font-family:'Vale JP',system-ui,sans-serif!important}
 html.mt-lobby-on .sv-menu{display:none!important}
 #mt-lobby.on{opacity:1}
+#mt-lobby:not(.on){pointer-events:none}
 #mt-lobby .lb-bg{display:none}
 /* pixel panels: corners cut by one art pixel */
 #mt-lobby .px{clip-path:polygon(var(--cut) 0,calc(100% - var(--cut)) 0,100% var(--cut),100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,var(--cut) 100%,0 calc(100% - var(--cut)),0 var(--cut))}
 #mt-lobby .pg{display:inline-block;vertical-align:middle;image-rendering:pixelated;flex:none}
 /* header: title plate left; the join chip + the mode chip right */
 #mt-lobby .lb-head{position:relative;margin-top:max(calc(var(--u) * 4),env(safe-area-inset-top,0px));display:flex;align-items:center;gap:calc(var(--u) * 6);width:calc(100vw - var(--gut) * 2);justify-content:space-between}
-#mt-lobby .lb-title{display:flex;align-items:center;background:var(--navy);color:var(--cream);border:var(--u) solid var(--ink);box-shadow:inset 0 0 0 var(--u) #4c5a96;padding:calc(var(--u) * 2) calc(var(--u) * 8) calc(var(--u) * 2) calc(var(--u) * 3)}
+#mt-lobby .lb-title{display:flex;align-items:center;margin-right:auto;background:var(--navy);color:var(--cream);border:var(--u) solid var(--ink);box-shadow:inset 0 0 0 var(--u) #4c5a96;padding:calc(var(--u) * 2) calc(var(--u) * 8) calc(var(--u) * 2) calc(var(--u) * 3)}
 #mt-lobby .lb-title > div{display:flex;align-items:center;gap:calc(var(--u) * 4)}
 #mt-lobby .lb-title small{display:none}
 #mt-lobby .lb-title b{display:block;white-space:nowrap}
@@ -217,6 +227,91 @@ html body #mt-lobby .rows .row{padding-left:calc(var(--u) * 7)}
 #mt-lobby .card .rows::-webkit-scrollbar{display:none}
 #mt-lobby .readybtn{margin-top:calc(var(--u) * 3)}
 }
+/* online room ("Ready?"): the invite card (code, QR, copy / share) left, the players + team + START right */
+#mt-lobby.online .lb-vs,#mt-lobby.online .lb-cards,#mt-lobby.online .lb-join,#mt-lobby.online .lb-mode .chip{display:none!important}
+#mt-lobby.online.code .lb-cards{display:flex!important}
+#mt-lobby.online.code .lb-room{display:none}
+#mt-lobby .lb-room{position:relative;flex:1 1 auto;min-height:0;width:100%;display:flex;gap:calc(var(--u) * 8);align-items:stretch;justify-content:center}
+#mt-lobby .lb-room[hidden]{display:none}
+#mt-lobby .rm-inv{flex:none;display:flex;flex-direction:column;background:var(--cream);border:var(--u) solid var(--ink);box-shadow:inset 0 0 0 var(--u) #fff;--cut:calc(var(--u) * 2);--pc:#8fc8ff}
+#mt-lobby .rm-inv .band,#mt-lobby .rm-ppl .band{flex:none;display:flex;align-items:center;gap:calc(var(--u) * 4);padding:calc(var(--u) * 1) calc(var(--u) * 6);background:var(--pc);border-bottom:var(--u) solid var(--ink);white-space:nowrap}
+#mt-lobby .rm-ib{flex:1 1 auto;min-height:0;display:flex;gap:calc(var(--u) * 8);padding:calc(var(--u) * 6) calc(var(--u) * 8) calc(var(--u) * 4);align-items:center}
+#mt-lobby .rm-qr{flex:none;border:var(--u) solid var(--ink);background:#fffdf4;line-height:0}
+#mt-lobby .rm-qr canvas{display:block;image-rendering:pixelated}
+#mt-lobby .rm-side{flex:none;display:flex;flex-direction:column;gap:calc(var(--u) * 5);align-items:stretch}
+#mt-lobby .rm-bs{display:flex;flex-direction:column;gap:calc(var(--u) * 5)}
+#mt-lobby .rm-ib.stack{flex-direction:column;justify-content:center;gap:calc(var(--u) * 5)}
+#mt-lobby .rm-ib.stack .rm-bs{flex-direction:row;gap:calc(var(--u) * 4)}
+#mt-lobby .rm-ib.stack .rm-bs .rbtn{flex:1 1 auto}
+#mt-lobby .rm-ib.stack.col .rm-bs{flex-direction:column;gap:calc(var(--u) * 5)}
+#mt-lobby .rm-code{display:flex;gap:calc(var(--u) * 3);align-items:center;justify-content:center}
+#mt-lobby .rm-code span{width:calc(var(--u) * 22);height:calc(var(--u) * 26);display:grid;place-items:center;background:#fff;border:var(--u) solid var(--ink);box-shadow:inset 0 calc(var(--u) * -3) 0 #d6cfb6;font-size:calc(var(--f) * 1)}
+#mt-lobby .rm-code small{color:#5a6290;margin-right:calc(var(--u) * 3)}
+#mt-lobby .rbtn{display:flex;align-items:center;justify-content:center;gap:calc(var(--u) * 3);min-height:max(calc(var(--u) * 22),48px);padding:0 calc(var(--u) * 8);background:var(--cream);border:var(--u) solid var(--ink);box-shadow:inset 0 calc(var(--u) * -2) 0 #d6cfb6,inset 0 var(--u) 0 #fff;cursor:pointer;white-space:nowrap;--cut:calc(var(--u) * 2)}
+#mt-lobby .rbtn.main{background:var(--gold);box-shadow:inset 0 calc(var(--u) * -2) 0 #e0a024,inset 0 var(--u) 0 #fff1a8}
+#mt-lobby .rbtn.f{outline:var(--u) solid var(--ink);outline-offset:calc(var(--u) * -4);background:#fff1b0}
+#mt-lobby .rbtn.main.f{background:#ffe27a}
+#mt-lobby .rbtn.dis{color:#8a8fae;cursor:default}
+/* a button that cannot be pressed yet: flat grey, dashed edge, the reason as its label (never gold) */
+#mt-lobby .rbtn.main.dis,#mt-lobby .rbtn.main.dis.f{background:#dcd7c6;color:#6f7496;border-style:dashed;box-shadow:none}
+#mt-lobby .rbtn.ok,#mt-lobby .rbtn.main.ok,#mt-lobby .rbtn.main.ok.f{background:#3fb64a;color:#fff;box-shadow:inset 0 calc(var(--u) * -2) 0 #2a8a34,inset 0 var(--u) 0 #8ae890}
+#mt-lobby .rbtn.main.ok.f{outline-color:#fff}
+/* the invite link, shortened but complete (host/…?join=CODE), wrapping inside the card */
+#mt-lobby .rm-url{margin:0 calc(var(--u) * 8) calc(var(--u) * 2);color:#5a6290;white-space:normal;overflow-wrap:anywhere}
+#mt-lobby .rm-hint{margin:0 calc(var(--u) * 8) calc(var(--u) * 5);color:#2c3666;white-space:normal}
+#mt-lobby .rm-inv.nohint .rm-hint{display:none}
+#mt-lobby .rm-url .nw{white-space:nowrap}
+#mt-lobby .rm-ppl{flex:1 1 0;min-width:0;max-width:calc(var(--u) * 330);display:flex;flex-direction:column;gap:calc(var(--u) * 5)}
+#mt-lobby .rm-hd{flex:none;align-self:flex-start;background:var(--navy);color:var(--cream);border:var(--u) solid var(--ink);box-shadow:inset 0 0 0 var(--u) #4c5a96;padding:calc(var(--u) * 1) calc(var(--u) * 8);white-space:nowrap}
+#mt-lobby .rm-pcs{flex:1 1 auto;min-height:0;display:flex;gap:calc(var(--u) * 5)}
+#mt-lobby .pc{flex:1 1 0;min-width:0;display:flex;flex-direction:column;background:var(--cream);border:var(--u) solid var(--ink);box-shadow:inset 0 0 0 var(--u) #fff;--cut:calc(var(--u) * 2);--pc:#ffd23a;overflow:hidden}
+#mt-lobby .pc.t1{--pc:#ffb0a0}#mt-lobby .pc.t0{--pc:#9cc8ff}
+#mt-lobby .pc .band{flex:none;display:flex;align-items:center;gap:calc(var(--u) * 3);padding:calc(var(--u) * 1) calc(var(--u) * 5);background:var(--pc);border-bottom:var(--u) solid var(--ink);white-space:nowrap;overflow:hidden}
+#mt-lobby .pc .band .tg2{margin-left:auto;padding:0 calc(var(--u) * 3);background:var(--navy);color:var(--cream)}
+#mt-lobby .pc .band.edit{cursor:pointer;pointer-events:auto}
+#mt-lobby .pc .band .ed{margin-left:auto;flex:none;display:grid;place-items:center;width:calc(var(--u) * 14);height:calc(var(--u) * 12);background:var(--cream);border:var(--u) solid var(--ink)}
+#mt-lobby .pc .band .ed canvas{width:calc(var(--u) * 8);height:calc(var(--u) * 8);image-rendering:pixelated}
+#mt-lobby .pc .band input{flex:1 1 auto;min-width:0;font:inherit;color:var(--ink);background:#fff;border:var(--u) solid var(--ink);padding:0 calc(var(--u) * 2);height:calc(var(--u) * 14);outline:none;border-radius:0;pointer-events:auto}
+#mt-lobby .pc .mon{flex:1 1 auto;min-height:calc(var(--u) * 40);display:grid;place-items:center;padding-top:calc(var(--u) * 2);overflow:hidden}
+#mt-lobby .pc .mon canvas{image-rendering:pixelated}
+#mt-lobby .pc .who{display:flex;align-items:center;justify-content:center;gap:calc(var(--u) * 3);padding:calc(var(--u) * 1) calc(var(--u) * 4) calc(var(--u) * 3);white-space:nowrap}
+#mt-lobby .pc .who canvas{width:calc(var(--u) * 16);height:calc(var(--u) * 16)}
+#mt-lobby .pc .rd{text-align:center;padding:0 calc(var(--u) * 4) calc(var(--u) * 3);color:#8a8fae;white-space:normal;word-break:keep-all}
+#mt-lobby .pc .rd.ok{color:#2a8a34}
+#mt-lobby .pc.wait{background:rgba(251,248,239,.7);border-style:dashed}
+#mt-lobby .pc.wait .mon b{font-size:calc(var(--f) * 2);line-height:1;color:#8a8fae;padding-bottom:calc(var(--u) * 8)}
+#mt-lobby .pc.wait .rd{animation:lb-blink 1s steps(2,end) infinite}
+@keyframes lb-blink{50%{opacity:.35}}
+#mt-lobby .rm-row{flex:none;display:flex;gap:calc(var(--u) * 4)}
+#mt-lobby .rm-row .rbtn{flex:1 1 0;min-width:0}
+#mt-lobby .rm-row .rbtn.on{background:var(--navy);color:var(--cream);box-shadow:inset 0 0 0 var(--u) #4c5a96}
+#mt-lobby .rm-row .rbtn.on.f{outline-color:var(--gold)}
+#mt-lobby .rm-row .rbtn small{color:inherit;opacity:.8;font-size:var(--f)}
+#mt-lobby .rm-row .rbtn.two{flex-direction:column;gap:0;padding-top:calc(var(--u) * 2);padding-bottom:calc(var(--u) * 3)}
+#mt-lobby .rm-go{flex:none;min-height:max(calc(var(--u) * 30),56px)}
+#mt-lobby .rm-msg{padding:calc(var(--u) * 10) calc(var(--u) * 10);white-space:normal;color:#2c3666;max-width:calc(var(--u) * 240)}
+#mt-lobby .rm-msg.err{color:#c0342a}
+/* the link / hint / other-rooms lines wrap to the card's width instead of widening it (the card is sized by roomQR) */
+#mt-lobby .rm-url,#mt-lobby .rm-hint,#mt-lobby .rm-games{contain:inline-size}
+#mt-lobby .rm-games .rbtn{white-space:normal;text-align:center}
+#mt-lobby .rm-games{display:flex;flex-direction:column;gap:calc(var(--u) * 2);margin:0 calc(var(--u) * 8) calc(var(--u) * 5)}
+#mt-lobby .lb-back canvas{image-rendering:pixelated;display:block}
+#mt-lobby .lb-back{display:grid;flex:none;pointer-events:auto;cursor:pointer;min-width:max(calc(var(--u) * 24),48px);min-height:max(calc(var(--u) * 22),44px);place-items:center;background:var(--cream);border:var(--u) solid var(--ink);box-shadow:inset 0 calc(var(--u) * -2) 0 #d6cfb6}
+@media (max-height:520px){
+#mt-lobby.online{display:flex;flex-direction:column;padding:max(calc(var(--u) * 4),env(safe-area-inset-top,0px)) max(calc(var(--u) * 6),env(safe-area-inset-right,0px)) max(calc(var(--u) * 3),env(safe-area-inset-bottom,0px)) max(calc(var(--u) * 6),env(safe-area-inset-left,0px))}
+#mt-lobby.online .lb-head{width:100%;justify-content:space-between}
+#mt-lobby.online .lb-main{display:flex;width:100%;margin-top:calc(var(--u) * 4)}
+#mt-lobby.online .lb-foot{margin-top:calc(var(--u) * 3)}
+#mt-lobby .rm-hint{display:none}
+/* short screens: player cards lie on their side (monster left, name + status right) so the starter stays big */
+#mt-lobby .pc{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto 1fr auto auto 1fr}
+#mt-lobby .pc .band{grid-column:1 / -1}
+#mt-lobby .pc .mon{grid-column:1;grid-row:2 / 6;width:calc(var(--u) * 80);min-height:0;padding-top:0}
+#mt-lobby .pc .who{grid-column:2;grid-row:3;justify-content:flex-start;padding-left:0}
+#mt-lobby .pc .rd{grid-column:2;grid-row:4;text-align:left;padding-left:0}
+#mt-lobby .pc.wait .mon{width:calc(var(--u) * 28)}
+#mt-lobby .pc.wait .mon b{padding-bottom:0}
+}
 /* touch: finger-sized arrows, but the glyph stays on the pixel font scale (input/touch.css sets 14 px + rounding) */
 html body.mt-touchui #mt-lobby .val .ar{font-size:var(--f);border-radius:0;background:none}
 html body.mt-touchui #mt-lobby .chip,html body.mt-touchui #mt-lobby .readybtn{border-radius:0}
@@ -268,13 +363,26 @@ const TOUCH_ICON = { toString: () => pg('hand') };
 const GAMEPAD_ART = '<svg class="gp" viewBox="0 0 64 40"><path d="M18 3h28c7 0 11.5 6 13.5 15 2 9.4 1 17.4-4.4 18.6-4.4 1-7.4-3.4-10-8.6H18.9c-2.6 5.2-5.6 9.6-10 8.6C3.5 35.4 2.5 27.4 4.5 18 6.5 9 11 3 18 3z" fill="#e9edff" stroke="#0d1230" stroke-width="2.4"/><path d="M22 6h20v8H22z" fill="#c9d0ea" stroke="#0d1230" stroke-width="1.6" rx="2"/><path d="M13.6 11.6h3.2v4h4v3.2h-4v4h-3.2v-4h-4v-3.2h4z" fill="#3a467e"/><circle cx="24" cy="25" r="4.6" fill="#3a467e"/><circle cx="40" cy="25" r="4.6" fill="#3a467e"/><circle cx="50" cy="12" r="2.3" fill="none" stroke="#5fe0b8" stroke-width="1.3"/><circle cx="50" cy="22" r="2.3" fill="#1b2350"/><path d="M48.6 20.6l2.8 2.8M51.4 20.6l-2.8 2.8" stroke="#9cc0ff" stroke-width="1.2"/><circle cx="45" cy="17" r="2.3" fill="none" stroke="#f7a6dc" stroke-width="1.3"/><circle cx="55" cy="17" r="2.3" fill="none" stroke="#ff8a8a" stroke-width="1.3"/></svg>';
 const TOUCH_ART = '<svg class="gp" viewBox="0 0 64 40"><rect x="10" y="4" width="44" height="32" rx="6" fill="#e9edff" stroke="#0d1230" stroke-width="2.4"/><rect x="14" y="8" width="36" height="24" rx="2" fill="#3a467e"/><path d="M30 14a2.2 2.2 0 0 1 4.4 0v7.4l6.2 1.3c1.8.4 3 2.1 2.7 3.9L42.4 34H30.8l-5.3-6.6a2.1 2.1 0 0 1 3.1-2.8l1.4 1.4z" fill="#fff3d6" stroke="#0d1230" stroke-width="1.6"/></svg>';
 
+/** the default online names (net.defaultName in each language): such a member is shown as "You" / "Friend" */
+const DEFAULT_NAMES = new Set(['トレーナー', 'Trainer']);
+/** a 7×7 pixel pencil (tap your name to change it) */
+function pencilCanvas() {
+  const c = document.createElement('canvas'); c.width = 8; c.height = 8; const g = c.getContext('2d');
+  const rows = ['.....##.', '....#ww#', '...#ww#.', '..#ww#..', '.#ww#...', '#yy#....', '#y#.....', '##......'];
+  rows.forEach((r, y) => [...r].forEach((ch, x) => { if (ch === '.') return; g.fillStyle = ch === '#' ? '#1b2350' : ch === 'w' ? '#ffd23a' : '#f4ecd8'; g.fillRect(x, y, 1, 1); }));
+  return c;
+}
+
 export class Lobby {
   constructor(ctx, locals = ctx.app.mtLocals, gamepad = ctx.app.mtPads) {
     this.ctx = ctx; this.app = ctx.app; this.locals = locals; this.gamepad = gamepad;
     this.slots = []; this.padSt = new Map(); this.root = null; this.cards = [];
     this.countdown = -1; this.t = 0; this.icons = new Map(); this.pendingPad = null; this.art = null; this.vs = null;
     this.online = null; // online panel / game room (mt/net/online.js): {view:'menu'|'code'|'room', focus, code, cur}
+    this.flow = null; this.solo = null; this.pendingOnline = null; // front-end flow: 'solo' | 'friend' | 'local'
     this.app.mtLobby = this;
+    try { this.menu = new FrontMenu(ctx, this); } catch (e) { console.error('[lobby] menu', e); this.menu = null; }
+    try { this.guide = new Guide(ctx); } catch (e) { console.error('[lobby] guide', e); this.guide = null; }
     this.app.on('state', (s) => this.onState(s));
     onLangChange(() => this.relocalize()); // i18n: rebuild every text live
     this.onKey = (e) => this.key(e);
@@ -286,6 +394,7 @@ export class Lobby {
   onState(s) {
     const app = this.app;
     if (s === 'select') {           // menu Play / end-screen Play Again -> lobby instead of champion select
+      if (this.flow === 'solo' && this.solo && !(this.app.mtNet && this.app.mtNet.inRoom())) { this.startSolo(this.solo.dev, this.solo.starter); return; } // Play again (solo): the same setup, at once
       app.state = 'lobby'; app.fire('state', 'lobby'); return;
     }
     if (s === 'lobby') this.enter(); else this.leave();
@@ -306,6 +415,8 @@ export class Lobby {
       this.slots = this.slots.slice(0, 1); if (this.slots[0]) this.slots[0].slot = 0;
       this.online = { view: 'room', focus: 0, code: '', cur: 0 };
       this.pendingPad = null; this.syncNet();
+    } else if (this.pendingOnline) {
+      this.beginOnline(this.pendingOnline); this.pendingOnline = null; this.pendingPad = null;
     } else {
       this.online = null;
       // whoever opened the lobby joins: a pad (pendingPad) or the keyboard/mouse (menu click / Enter)
@@ -331,7 +442,9 @@ export class Lobby {
     const team = this.teamCount(0) < TEAM_SIZE ? 0 : 1;
     const used = this.slots.filter((x) => x.team === team).map((x) => x.spec);
     const spec = SPEC_IDS.find((id) => !used.includes(id)) || SPEC_IDS[s % 3];
-    const sl = { slot: s, device: dev, team, spec, look: spec, ready: false, row: 0, holdT: 0, name: 'Player ' + (s + 1), wasd: false, ...extra }; // name: English key, roster shows trainerName()
+    const P = prefs(), mine = this.slots.length === 0;
+    const takenSt = this.slots.map((x) => x.starter), starter = mine ? P.starter : STARTERS.find((id) => !takenSt.includes(id)) || STARTERS[s % 3];
+    const sl = { slot: s, device: dev, team, spec: mine ? P.spec : spec, look: mine ? P.look : spec, starter, ready: false, row: 0, holdT: 0, name: 'Player ' + (s + 1), wasd: false, ...extra }; // name: English key, roster shows trainerName()
     this.slots.push(sl); this.slots.sort((a, b) => a.slot - b.slot);
     this.countdown = -1; this.dirty = true; this.sfx('confirm');
     return sl;
@@ -349,10 +462,15 @@ export class Lobby {
     this.slots.splice(this.slots.indexOf(sl), 1);
     this.countdown = -1; this.dirty = true; this.sfx('click');
   }
-  rows(sl) { return sl.device === 'kbm' && sl.inputType !== 'touch' ? ['team', 'spec', 'look', 'move', 'lang', 'net', 'ready'] : ['team', 'spec', 'look', 'lang', 'net', 'ready']; } // net: online play
+  rows(sl) { // the starter first (the first monster), online play lives in the main menu now
+    if (this.online) return sl.device === 'kbm' && sl.inputType !== 'touch' ? ['team', 'spec', 'look', 'move', 'lang', 'ready'] : ['team', 'spec', 'look', 'lang', 'ready'];
+    return sl.device === 'kbm' && sl.inputType !== 'touch' ? ['starter', 'team', 'spec', 'look', 'move', 'lang', 'ready'] : ['starter', 'team', 'spec', 'look', 'lang', 'ready'];
+  }
+  /** the input mode prompts are drawn for (touch-first devices show touch prompts before their first tap) */
+  inputView() { return viewMode(this.app); }
   relocalize() { // i18n: language switched — rebuild the lobby DOM in place
     if (!this.root) return;
-    const on = !this.root.hidden;
+    const on = !this.root.hidden && this.app.state === 'lobby';   // (a lobby fading out after leaving stays gone)
     this.root.remove(); this.root = null; this.cards = [];
     this.build();
     if (on) { this.root.hidden = false; this.root.classList.add('on'); }
@@ -371,6 +489,9 @@ export class Lobby {
       const i = (SPEC_IDS.indexOf(sl.spec) + d + 3) % 3, prev = sl.spec;
       sl.spec = SPEC_IDS[i];
       if (sl.look === prev) sl.look = sl.spec; // outfit follows the spec until changed on purpose
+    } else if (row === 'starter') {
+      sl.starter = STARTERS[(STARTERS.indexOf(sl.starter) + d + STARTERS.length) % STARTERS.length];
+      if (this.slots[0] === sl) savePrefs({ starter: sl.starter });
     } else if (row === 'look') {
       sl.look = SPEC_IDS[(SPEC_IDS.indexOf(sl.look) + d + 3) % 3];
     } else if (row === 'move') {
@@ -421,11 +542,9 @@ export class Lobby {
   // ------------------------------------------------------------------ input
   key(e) {
     const app = this.app;
-    if (app.state === 'menu' && (e.code === 'Enter' || e.code === 'NumpadEnter') && !e.repeat && (!app.ui || app.ui.panel === 'none')) {
-      e.preventDefault(); this.go('select'); return;
-    }
+    if (app.state === 'menu') { if (this.menu) this.part('menu', () => this.menu.key(e)); return; }   // title / main menu / starter (menu.js)
     if (app.state !== 'lobby') return;
-    if (this.online && this.online.view !== 'room') { this.onlineKey(e); this.render(); return; } // online panel (browse / code)
+    if (this.online) { if (this.online.view === 'code') this.onlineKey(e); else this.roomKeyIn(e); this.render(); return; } // online: code entry / the room
     const tg = e.target; if (tg && tg.tagName === 'INPUT') return;   // typing a name
     e.stopImmediatePropagation(); e.preventDefault();
     if (e.repeat && !/Arrow|Key[WASD]/.test(e.code)) return;
@@ -456,16 +575,11 @@ export class Lobby {
       let s = this.padSt.get(pad.index); if (!s) this.padSt.set(pad.index, s = new PadState());
       s.tick(pad, dt);
       const dir = s.navDir(pad, dt);
-      if (app.state === 'menu') {
-        // ✕ / Options on the title screen opens the lobby with this pad joined
-        if ((s.down(BTN.CROSS) || s.down(BTN.OPTIONS)) && (!app.ui || app.ui.panel === 'none')) { unlockAudio(app); this.pendingPad = pad; this.go('select'); }
-        else if ((dir === 'left' || dir === 'right') && (!app.ui || app.ui.panel === 'none')) nextLang(dir === 'left' ? -1 : 1); // i18n: title language picker
-        continue;
-      }
+      if (app.state === 'menu') { if (this.menu) this.part('menu', () => this.menu.padInput(pad, s, dir)); continue; }   // menu.js: title / main / starter
       if (app.state !== 'lobby') continue;
       if (s.any()) unlockAudio(app);
       const sl = this.slots.find((x) => x.device === 'pad:' + pad.index);
-      if (this.online && this.online.view !== 'room') { if (sl || this.slots.length === 0 || this.slots[0].device === 'kbm') this.onlinePad(s, dir); continue; } // online panel
+      if (this.online) { if (sl || this.slots.length === 0 || this.slots[0].device === 'kbm') { if (this.online.view === 'code') this.onlinePad(s, dir); else this.roomPad(s, dir); } continue; } // online: code entry / the room
       if (!sl) {
         if (s.down(BTN.CROSS) || s.down(BTN.OPTIONS)) this.joinPad(pad);
         else if (s.down(BTN.CIRCLE) && !this.slots.length) this.go('menu');
@@ -493,6 +607,8 @@ export class Lobby {
   update(f) {
     const dt = Math.min(0.1, f.dt || 0); this.t += dt;
     this.pads(dt);
+    if (this.menu) this.part('menu', () => this.menu.update(f));
+    if (this.guide) this.part('guide', () => this.guide.update(f));
     if (f.state !== 'lobby' || !this.root) return;
     // the screen's player follows the input family it really uses (touch <-> keys); pads keep their own cards
     const kb = this.slots.find((x) => x.device === 'kbm'), mode = this.app.mtInputMode;
@@ -500,10 +616,12 @@ export class Lobby {
     if (mode !== this.lastMode) { this.lastMode = mode; this.dirty = true; for (const C of this.cards) C.key = ''; }
     if (this.online) { // online: no local countdown — the host's START begins the match (mt/net/online.js)
       const net = this.app.mtNet;
-      if (this.online.view === 'room' && net && !net.inRoom() && !net.joining) { this.online.view = 'menu'; this.online.focus = 0; for (const s of this.slots) s.ready = false; this.dirty = true; }
-      if (this.online.view !== 'room' && net && net.inRoom()) { this.online.view = 'room'; this.dirty = true; this.syncNet(); }
+      if (this.online.view === 'wait') this.netGo();
+      if (this.online.view === 'room' && net && !net.inRoom() && !net.joining) { this.online.view = 'fail'; this.online.focus = 0; this.online.hostGo = false; for (const s of this.slots) s.ready = false; this.dirty = true; }
+      if ((this.online.view === 'wait' || this.online.view === 'fail' || this.online.view === 'menu') && net && net.inRoom() && !this.online.busy) { this.online.view = 'room'; this.dirty = true; this.syncNet(); }
+      if (this.online.view === 'room' && net && net.inRoom()) this.roomRules(net);
       this.countdown = -1;
-      this.render(); this.vsTick(dt);
+      this.render(); this.roomTick(dt);
       return;
     }
     const all = this.slots.length > 0 && this.slots.every((x) => x.ready);
@@ -524,12 +642,327 @@ export class Lobby {
     const app = this.app;
     this.countdown = -1;
     const slots = this.slots.map((s) => ({ ...s }));
-    const players = lobbyRoster(slots, opts);
+    const starters = Object.fromEntries(slots.map((s) => [s.slot, s.starter || prefs().starter]));
+    const players = lobbyRoster(slots, { starters, ...opts });
     const seed = opts.seed ?? ((Date.now() / 1000) | 0) % 100000;
-    app.newMatch({ seed, players });
+    this.flow = 'local';
+    app.newMatch({ seed, players, options: matchOptions() });
     for (const sl of this.slots) sl.ready = false;
     this.go('loading');
     return players;
+  }
+
+  // ------------------------------------------------------------------ front-end flow entries (mt/ui/menu.js)
+  /** a guarded sub-part (menu / guide): its errors are counted like an mt-ui part's, the lobby keeps running */
+  part(name, fn) {
+    try { return fn(); } catch (e) {
+      const app = this.app, k = 'mt-ui:' + name, g = app.errors && (app.errors[k] || (app.errors[k] = { count: 0, last: '' }));
+      if (g) { g.count++; g.last = String(e && e.stack || e).slice(0, 400); if (g.count <= 3) console.error('[' + k + ']', e); }
+      return undefined;
+    }
+  }
+  /** ひとりで あそぶ: this device's trainer (with the chosen starter) + 5 bots, straight into the match */
+  startSolo(dev, starter) {
+    const P = prefs(), app = this.app;
+    this.flow = 'solo'; this.solo = { dev: { ...dev }, starter }; this.online = null; this.countdown = -1;
+    const slot = { slot: 0, device: dev.device || 'kbm', team: 0, spec: P.spec, look: P.look, starter, name: 'Player 1',
+      inputType: dev.inputType || 'kbm', padId: dev.padId || '', padIndex: dev.padIndex ?? -1, wasd: dev.device === 'kbm' ? loadWasdPref() : false };
+    const players = lobbyRoster([slot], { starters: { 0: starter } });
+    const seed = ((Date.now() / 1000) | 0) % 100000;
+    app.newMatch({ seed, players, options: matchOptions() });
+    this.go('loading');
+    return players;
+  }
+  /** おなじ がめんで: the pad-join lobby, the device that chose it already joined */
+  openLocal(pad) {
+    this.flow = 'local'; this.online = null; this.pendingOnline = null;
+    this.slots = []; this.pendingPad = pad || null;
+    this.go('select');
+  }
+  /** ともだちと あそぶ / invite link: the lobby's online room — created at once (or the link's room joined) */
+  openFriend(o, dev, starter, pad) {
+    this.flow = 'friend'; this.pendingOnline = { ...o, dev: { ...dev }, starter }; this.pendingPad = pad || null;
+    this.go('select');
+  }
+  beginOnline(o) {
+    const P = prefs(), net = this.app.mtNet, dev = o.dev || { device: 'kbm', inputType: 'kbm' };
+    const sl = { slot: 0, device: dev.device || 'kbm', team: 0, spec: P.spec, look: P.look, starter: o.starter || P.starter, ready: false, row: 0, holdT: 0, name: 'Player 1',
+      inputType: dev.inputType || 'kbm', padId: dev.padId || '', padIndex: dev.padIndex ?? -1, wasd: dev.device === 'kbm' ? loadWasdPref() : false };
+    this.slots = [sl]; this.countdown = -1;
+    this.online = { view: 'wait', focus: 0, code: '', cur: 0, want: o.join ? 'join' : 'create', joinCode: o.join || null };
+    if (net) {
+      net.setDevice({ device: sl.device, inputType: sl.inputType, padId: sl.padId, padIndex: sl.padIndex, wasd: sl.wasd });
+      net.setMine({ tm: 0, sp: sl.spec, lk: sl.look, rd: 0, starter: sl.starter });   // starter: presence `sr` (mt/net/online.js)
+      if (net.setMatchOptions) net.setMatchOptions(matchOptions());                    // the host's choice travels in `go.o`
+    }
+    this.netGo();
+  }
+  /** create / join once the transport is up (status 'init' -> later frames retry) */
+  netGo() {
+    const O = this.online, net = this.app.mtNet; if (!O || O.view !== 'wait' || O.busy) return;
+    if (!net || net.status === 'init') return;
+    if (!net.available()) { O.view = 'fail'; this.dirty = true; return; }
+    // claude.ai room (games are listed to everyone on the page): exactly one open game of someone else = the friend's
+    // room -> join it instead of opening a second one (falls back to creating if it is gone)
+    if (O.want === 'create' && !O.noAuto && net.tr && net.tr.discovery) {
+      const open = net.openGames().filter((g) => g.open && g.version !== false);
+      if (open.length === 1) { O.want = 'join'; O.joinCode = open[0].code; O.auto = true; }
+    }
+    O.busy = true;
+    const p = O.want === 'join' ? net.joinGame(O.joinCode) : net.createGame();
+    p.then((ok) => {
+      O.busy = false; if (this.online !== O) return;
+      if (ok) { O.view = 'room'; this.syncNet(); } else if (O.auto) { O.auto = false; O.noAuto = true; O.want = 'create'; O.joinCode = null; if (net) net.error = null; }
+      else O.view = 'fail';
+      this.dirty = true;
+    })
+      .catch(() => { O.busy = false; if (this.online === O) { O.view = 'fail'; this.dirty = true; } });
+  }
+
+
+  // ------------------------------------------------------------------ online room ("Ready?" screen)
+  // Left: the invite (code, a pixel QR of the link, Copy link, Share… = navigator.share). Right: one card per player
+  // with their starter, the team choice (Together vs bots | Against each other: one tap), bot strength + match length
+  // (the host's; travel in `go.o`), and the big START (host) / READY (guests join ready). The match starts when the
+  // host has pressed START and every guest is ready (net.canStart).
+  /** my room members (or just me while connecting) */
+  roomMembers(net, mem) {
+    const sl = this.slots[0] || {};
+    if (mem && mem.length) return mem.filter((m) => m.ok).map((m) => (m.me && !m.starter ? { ...m, starter: sl.starter } : m));
+    return [{ peer: 'me', me: true, nm: net ? net.displayName() : '', tm: sl.team || 0, starter: sl.starter, rd: !!sl.ready, host: true, ok: true, st: 'lb' }];
+  }
+  teamMode(ms) { return ms.length < 2 ? prefs().tmode : ms.every((m) => m.tm === ms[0].tm) ? 'coop' : 'vs'; }
+  roomItems() {
+    const O = this.online, net = this.app.mtNet, it = [];
+    if (!O) return it;
+    if (O.view === 'fail') return ['retry', 'back'];
+    if (O.view !== 'room') return ['back'];
+    const link = net && net.inviteUrl ? net.inviteUrl() : null;
+    if (link) { it.push('copy'); if (typeof navigator !== 'undefined' && navigator.share) it.push('share'); }
+    for (const g of this.roomGames()) it.push('g:' + g.code);
+    it.push('code', 'coop', 'vs');
+    if (net && net.isHost) it.push('diff', 'len');
+    it.push('go');
+    return it;
+  }
+  /** other open games (discovery transports only: claude.ai room / mock) */
+  roomGames() { const net = this.app.mtNet; return net && net.openGames ? net.openGames().filter((g) => g.open && g.code !== net.code).slice(0, 3) : []; }
+  roomFocusId() { const O = this.online, it = this.roomItems(); if (!O || !it.length) return null; if (O.rf == null || !it.includes(O.rf)) O.rf = it.includes('go') && this.roomMembers(this.app.mtNet, this.app.mtNet && this.app.mtNet.inRoom() ? this.app.mtNet.members() : null).length > 1 ? 'go' : it[0]; return O.rf; }
+  roomMove(d) { const it = this.roomItems(), cur = this.roomFocusId(); if (!it.length) return; this.online.rf = it[(it.indexOf(cur) + d + it.length) % it.length]; this.sfx('click'); }
+  roomBack() {
+    const O = this.online;
+    if (!O) { if (this.slots.some((x) => x.ready)) { for (const x of this.slots) x.ready = false; this.countdown = -1; this.dirty = true; this.sfx('click'); return; } this.slots = []; this.sfx('click'); this.go('menu'); return; }   // local lobby: back to the main menu
+    if (O.view === 'code') { this.onlineActivate({ id: 'back' }); return; }
+    const net = this.app.mtNet; if (net && net.joining && net.cancelJoin) net.cancelJoin();   // backing out of "joining…" (WebRTC retries)
+    this.sfx('click'); this.online = null; this.go('menu');   // NetController leaves the room on the title state
+  }
+  roomActivate(id) {
+    const O = this.online, net = this.app.mtNet, sl = this.slots[0]; if (!O || !id) return;
+    if (id === 'back') { this.roomBack(); return; }
+    if (id === 'retry') { O.view = 'wait'; O.busy = false; if (net) net.error = null; this.netGo(); this.sfx('click'); return; }
+    if (!net || O.view !== 'room') return;
+    if (id === 'copy') { this.copyLink(net.inviteUrl()); return; }
+    if (id === 'share') { try { navigator.share({ title: 'Sundered Vale', text: t('room.shareText'), url: net.inviteUrl() }).catch(() => {}); } catch { /* not allowed */ } this.sfx('confirm'); return; }
+    if (id === 'code') { O.prevView = 'room'; O.view = 'code'; O.code = ''; O.cur = 0; O.focus = 0; this.netCard.key = ''; this.sfx('click'); return; }
+    if (id.startsWith('g:')) { const code = id.slice(2); O.view = 'wait'; O.want = 'join'; O.joinCode = code; O.busy = false; this.netGo(); this.sfx('confirm'); return; }
+    if (id === 'coop' || id === 'vs') { this.setTeamMode(id); return; }
+    if (id === 'diff' || id === 'len') {
+      if (!net.isHost) { this.sfx('deny'); return; }
+      const P = prefs(); savePrefs(id === 'diff' ? { difficulty: cycle(DIFFICULTIES, P.difficulty, 1) } : { mode: cycle(MODES, P.mode, 1) });
+      if (net.setMatchOptions) net.setMatchOptions(matchOptions());
+      this.sfx('click'); return;
+    }
+    if (id === 'go') {
+      const ms = this.roomMembers(net, net.members());
+      if (net.isHost) {
+        if (ms.length < 2) { this.sfx('deny'); return; }
+        O.hostGo = !O.hostGo; if (sl) sl.ready = O.hostGo; this.sfx(O.hostGo ? 'confirm' : 'click');
+        if (O.hostGo && net.canStart()) { O.hostGo = false; net.startMatch(); }
+      } else if (sl) { sl.ready = !sl.ready; sl.readyAt = this.t; this.syncNet(); this.sfx(sl.ready ? 'confirm' : 'click'); }
+    }
+  }
+  setTeamMode(m) {
+    const net = this.app.mtNet, sl = this.slots[0]; if (!net || !sl) return;
+    savePrefs({ tmode: m });
+    const others = this.roomMembers(net, net.members()).filter((x) => !x.me), ref = others.find((x) => x.host) || others[0];
+    if (!ref) { this.sfx('click'); return; }   // alone: remembered, applied when the friend arrives (roomRules)
+    const want = m === 'coop' ? ref.tm : 1 - ref.tm;
+    if (want !== sl.team) { if (net.setMine({ tm: want })) sl.team = want; else { this.sfx('deny'); return; } }
+    this.syncNet(); this.sfx('click');
+  }
+  /** per frame in the room: the host's remembered team choice once a friend arrives, guests ready on arrival, auto-start */
+  roomRules(net) {
+    const O = this.online, sl = this.slots[0]; if (!O || !sl) return;
+    const ms = this.roomMembers(net, net.members()), n = ms.length;
+    if (!net.isHost && !O.autoReady) { O.autoReady = true; sl.ready = true; sl.readyAt = this.t; this.syncNet(); }
+    if (net.isHost && n >= 2 && (O.seenN || 1) < 2 && prefs().tmode === 'vs') this.setTeamMode('vs');
+    if (n !== O.seenN) { if ((O.seenN || 1) < 2 && n >= 2 && O.rf !== 'go') O.rf = 'go'; O.seenN = n; this.dirty = true; }
+    if (net.isHost && O.hostGo && n >= 2 && net.canStart()) { O.hostGo = false; net.startMatch(); }
+  }
+  copyLink(link) {
+    if (!link) return;
+    const done = () => { this.online && (this.online.copied = this.t); this.sfx('confirm'); };
+    const sel = () => { try { const ta = document.createElement('textarea'); ta.value = link; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;left:-9999px;top:0'; document.body.appendChild(ta); ta.select(); if (document.execCommand('copy')) done(); ta.remove(); } catch { /* clipboard blocked */ } };
+    try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(done, sel); else sel(); } catch { sel(); }
+  }
+  roomKeyIn(e) {
+    const c = e.code; if (e.target && e.target.tagName === 'INPUT') return;
+    e.stopImmediatePropagation(); e.preventDefault();
+    if (e.repeat && !/Arrow/.test(c)) return;
+    if (c === 'ArrowDown' || c === 'ArrowRight' || c === 'Tab' || c === 'KeyS' || c === 'KeyD') this.roomMove(1);
+    else if (c === 'ArrowUp' || c === 'ArrowLeft' || c === 'KeyW' || c === 'KeyA') this.roomMove(-1);
+    else if (c === 'Enter' || c === 'Space' || c === 'NumpadEnter') this.roomActivate(this.roomFocusId());
+    else if (c === 'Escape' || c === 'Backspace') this.roomBack();
+  }
+  roomPad(s, dir) {
+    if (dir === 'down' || dir === 'right') this.roomMove(1); else if (dir === 'up' || dir === 'left') this.roomMove(-1);
+    if (s.down(BTN.CROSS)) this.roomActivate(this.roomFocusId());
+    if (s.down(BTN.OPTIONS)) this.roomActivate('go');
+    if (s.down(BTN.CIRCLE)) this.roomBack();
+  }
+  renderRoom(net, mem) {
+    const O = this.online, R = this.roomEl;
+    const ms = this.roomMembers(net, mem), link = O.view === 'room' && net && net.inviteUrl ? net.inviteUrl() : null;
+    const games = O.view === 'room' ? this.roomGames() : [];
+    const opt = (net && net.matchOptionsNow && net.matchOptionsNow()) || matchOptions();
+    const err = net && net.error ? net.error : '';
+    const copied = O.copied != null && this.t - O.copied < 1.6;
+    const key = JSON.stringify([O.view, net && net.code, link, ms.map((m) => [m.peer, m.nm, m.tm, m.starter, m.rd, m.host, m.me]), opt, getLang(), this.roomFocusId(), O.hostGo, err, copied,
+      games.map((g) => g.code + g.name), net && net.isHost, this.art ? 1 : 0, O.want, O.joinCode, prefs().tmode, (this.slots[0] || {}).ready,
+      innerWidth, innerHeight, (this.app.mtMenuGrid || {}).Z, !!O.editName, this.inputView()]);   // (size: the QR is fitted to the room)
+    if (key === this.roomKey_) return;
+    this.roomKey_ = key;
+    R.textContent = ''; this.roomMons = [];
+    const F = this.roomFocusId(), host = !!(net && net.isHost);
+    const B = (cls, parent, id, html) => { const b = h('div', 'rbtn px ' + cls + (id === F ? ' f' : ''), parent); b.setAttribute('role', 'button'); b.dataset.id = id; if (html != null) b.innerHTML = html; b.addEventListener('click', (e) => { e.stopPropagation(); this.online.rf = id; this.roomActivate(id); this.render(); }); return b; };
+    // ---- the invite card
+    const inv = h('div', 'rm-inv px', R);
+    let qbox = null, side = null, ib = null;
+    h('b', null, h('div', 'band', inv), t('room.invite'));
+    if (O.view !== 'room') {
+      const msg = h('div', 'rm-msg px' + (O.view === 'fail' ? ' err' : ''), inv);
+      msg.textContent = O.view === 'fail' ? t(err || (net && !net.available() ? 'net.unavailable' : 'net.joinFailed')) : O.want === 'join' ? t('net.joining', { code: O.joinCode || '' }) : t('room.creating');
+      if (O.view === 'fail') { const row = h('div', 'rm-row', inv); row.style.margin = '0 calc(var(--u) * 8) calc(var(--u) * 6)'; B('main', row, 'retry', t('room.retry')); B('', row, 'back', t('net.back')); }
+    } else {
+      ib = h('div', 'rm-ib', inv);
+      qbox = link ? h('div', 'rm-qr', ib) : null;   // the QR is drawn once the room is laid out (roomQR)
+      side = h('div', 'rm-side', ib);
+      const cd = h('div', 'rm-code', side); h('small', null, cd, t('room.code')); for (const ch of String(net.code || '')) h('span', null, cd, ch);
+      const bs = h('div', 'rm-bs', side);   // copy / share / join-with-code: a column beside the QR, a row under it
+      if (link) {
+        B('main', bs, 'copy', copied ? t('net.copied') : t('room.copy'));
+        if (typeof navigator !== 'undefined' && navigator.share) B('', bs, 'share', t('room.share'));
+      }
+      B('', bs, 'code', t('net.joinCode'));
+      if (link) {
+        // shortened but complete: host/…?join=CODE, line breaks only after the host or before ?join
+        let parts = [link]; try { const u = new URL(link), path = u.pathname.replace(/index\.html$/, ''); parts = [u.host + '/', path.length > 1 ? '…' : '', '?join=' + net.code]; } catch { /* keep */ }
+        const ue = h('div', 'rm-url', inv); parts.filter(Boolean).forEach((x, i) => { if (i) ue.appendChild(document.createElement('wbr')); if (x[0] === '?') h('span', 'nw', ue, x); else ue.appendChild(document.createTextNode(x)); });
+        h('div', 'rm-hint', inv, t('room.scan'));
+      } else h('div', 'rm-hint', inv, t('room.codeHint', { code: net.code || '' }));
+      if (games.length) { const gl = h('div', 'rm-games', inv); h('div', null, gl, t('room.others')); for (const g of games) B('', gl, 'g:' + g.code, `${g.code}・${g.name.replace(/[<>&]/g, '')}`); }
+    }
+    // ---- players, team, options, START
+    const ppl = h('div', 'rm-ppl', R);
+    h('b', null, h('div', 'rm-hd px', ppl), t('room.ready'));   // the "Ready?" panel: players, team, options, START
+    const pcs = h('div', 'rm-pcs', ppl), others = ms.filter((m) => !m.me);
+    let editInput = null;
+    for (const m of ms.slice(0, 6)) {
+      const c = h('div', 'pc px t' + m.tm, pcs), band = h('div', 'band', c);
+      const custom = !!m.nm && !DEFAULT_NAMES.has(m.nm) && m.nm !== t('net.defaultName');
+      const label = custom ? m.nm : m.me ? t('room.you') : others.length > 1 ? t('room.friendN', { n: others.indexOf(m) + 1 }) : t('room.friend');
+      if (m.me && O.view === 'room' && O.editName) {   // quick name edit: Enter / tap away keeps it, Esc cancels
+        const inp = h('input', null, band); inp.type = 'text'; inp.maxLength = 12; inp.value = O.nameDraft ?? (custom ? m.nm : '');
+        inp.placeholder = t('room.namePh'); inp.autocomplete = 'off'; inp.spellcheck = false; inp.setAttribute('enterkeyhint', 'done'); inp.setAttribute('aria-label', t('room.rename'));
+        const commit = () => { if (!O.editName) return; O.editName = false; if (net) net.setName(O.nameDraft ?? inp.value); O.nameDraft = null; this.roomKey_ = ''; this.dirty = true; };
+        inp.addEventListener('input', () => { O.nameDraft = inp.value; });
+        inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); commit(); } else if (e.key === 'Escape') { e.preventDefault(); O.editName = false; O.nameDraft = null; this.roomKey_ = ''; this.dirty = true; } });
+        inp.addEventListener('blur', commit);
+        inp.addEventListener('pointerdown', (e) => e.stopPropagation());
+        editInput = inp;
+      } else {
+        h('span', null, band, label);
+        if (m.me && custom) h('span', 'tg2', band, t('room.you'));
+        if (m.me && O.view === 'room') {   // tap your own name to change it
+          const ed = h('span', 'ed', band); ed.appendChild(pencilCanvas());
+          band.classList.add('edit'); band.setAttribute('role', 'button'); band.setAttribute('aria-label', t('room.rename'));
+          band.addEventListener('click', (e) => { e.stopPropagation(); O.editName = true; O.nameDraft = custom ? m.nm : ''; this.roomKey_ = ''; this.render(); });
+        }
+      }
+      const mon = h('div', 'mon', c), cv = h('canvas', null, mon); cv.width = cv.height = 1; cv.style.width = cv.style.height = '1px';   // sized in roomTick (fits the box)
+      this.roomMons.push({ cv, id: m.starter || 'cindle', i: this.roomMons.length });
+      const who = h('div', 'who', c), st = m.starter || 'cindle';
+      const ei = this.elemIcon(STARTER_TYPE[st]); if (ei) who.appendChild(ei); who.appendChild(document.createTextNode(formName(st)));
+      h('div', 'rd' + (m.rd || m.host ? ' ok' : ''), c, m.host ? (m.me && O.hostGo ? t('room.waitStart') : '★ ' + t('net.host')) : m.rd ? t('lobby.ready') : t('room.notReady'));
+    }
+    if (ms.length < 2) { const c = h('div', 'pc px wait', pcs); h('div', 'band', c, '?'); h('b', null, h('div', 'mon', c), '?'); h('div', 'rd', c, O.view === 'room' ? t('room.waitFriend') : '…'); }
+    if (O.view === 'room') {
+      const tm = this.teamMode(ms), tr = h('div', 'rm-row', ppl);
+      B('two' + (tm === 'coop' ? ' on' : ''), tr, 'coop', `<span>${t('room.together')}</span><small>${t('room.together.sub')}</small>`);
+      B('two' + (tm === 'vs' ? ' on' : ''), tr, 'vs', `<span>${t('room.versus')}</span><small>${t('room.versus.sub')}</small>`);
+      const orow = h('div', 'rm-row', ppl);
+      const dl = t('opt.difficulty') + ' ' + t('opt.difficulty.' + (opt.difficulty || 'easy')), ll = t('opt.mode') + ' ' + t('opt.mode.' + (opt.mode || 'quick'));
+      if (host) { B('', orow, 'diff', dl + ' ▶'); B('', orow, 'len', ll + ' ▶'); } else { h('div', 'rbtn px dis', orow, dl); h('div', 'rbtn px dis', orow, ll); }
+      const me = ms.find((m) => m.me) || {}, can = ms.length >= 2;
+      // the host's START says why it cannot be pressed yet (no friend in the room): grey, dashed, the reason as label
+      const goLab = host ? (!can ? t('room.waitFriend') : O.hostGo ? t('room.waiting') : t('net.start')) : me.rd ? t('lobby.ready') : t('lobby.readyQ');
+      const go = B('main rm-go' + (host && !can ? ' dis' : '') + ((host && O.hostGo && can) || (!host && me.rd) ? ' ok' : ''), ppl, 'go', goLab);
+      if (host && !can) go.setAttribute('aria-disabled', 'true');
+      else if (this.inputView() !== 'touch') go.insertAdjacentHTML('afterbegin', glyphHTML(this.slots[0] && this.slots[0].device !== 'kbm' ? glyphFamily(this.slots[0].inputType) : this.app.mtInputMode === 'kbm' ? 'kbm' : 'ps', this.app.mtInputMode === 'kbm' && !(this.slots[0] && this.slots[0].device !== 'kbm') ? 'Enter' : 0));
+    }
+    if (qbox) this.roomQR(qbox, link, R, ib, side);
+    this.roomTick(0);
+    if (editInput) { editInput.focus(); try { const n = editInput.value.length; editInput.setSelectionRange(n, n); } catch { /* old Safari */ } }
+  }
+  /** the invite QR as big as the room leaves it: whole art px per module (crisp). Three arrangements, measured: the code
+   *  + buttons column beside the QR (wide or short screens), or under it with the buttons in a row / in a column (tall
+   *  4:3 screens: a bigger QR). The "Ready?" panel keeps its min-content width (labels never clip, any language).
+   *  Grid-size estimate when the lobby is not laid out yet. */
+  roomQR(box, link, R, ib, side) {
+    const MG = this.app.mtMenuGrid, q = MG && MG.Z ? MG.Z / MG.dpr : 2, ah = (MG && MG.ah) || 384, CAP = 200;
+    const q0 = qrCanvas(link, { module: 1, quiet: 3 }), n = q0 ? q0.width : 35;
+    let m;
+    if (R.clientWidth > 0 && ib.clientHeight > 0) {
+      const ppl = R.querySelector('.rm-ppl'), ps = ppl && ppl.style;
+      let PPL = 230;
+      if (ps) { ps.flex = 'none'; ps.width = 'min-content'; PPL = Math.min(330, Math.max(180, ppl.offsetWidth / q)); ps.flex = ps.width = ''; }
+      const Rw = R.clientWidth / q, inv = ib.parentElement;   // room width (art px)
+      // stacked (narrow card): the scan hint goes (the footer already says "send the link or the QR"), the QR gets its room
+      const fit = (cls) => {
+        ib.className = 'rm-ib' + cls; inv.classList.toggle('nohint', !!cls);
+        const hI = ib.clientHeight / q, sw = side.offsetWidth / q, sh = side.offsetHeight / q;   // the card's free height
+        const sz = !cls ? Math.min(hI - 12, Rw - sw - 36 - PPL, CAP) : sw + 26 + PPL <= Rw ? Math.min(hI - 17 - sh, Rw - 28 - PPL, CAP) : 0;
+        return [cls, Math.floor(sz / n)];
+      };
+      const best = ['', ' stack', ' stack col'].map(fit).reduce((a, b) => (b[1] > a[1] ? b : a));
+      ib.className = 'rm-ib' + best[0]; inv.classList.toggle('nohint', !!best[0]); m = best[1];
+    } else m = Math.floor(Math.min(ah * 0.46, ((MG && MG.aw) || 512) - 24 - 132 - 36 - 230, CAP) / n);
+    const qc = qrCanvas(link, { module: Math.max(2, m), quiet: 3 });
+    if (!qc) { box.remove(); return; }
+    qc.style.width = `calc(var(--u) * ${qc.width})`; qc.style.height = `calc(var(--u) * ${qc.height})`;
+    box.appendChild(qc); box.title = link;
+    // the text around it can wrap differently once it is in: step the module size down until nothing overflows
+    for (let mm = Math.max(2, m) - 1; mm >= 2 && R.clientWidth > 0 && (ib.scrollHeight > ib.clientHeight + 1 || R.scrollWidth > R.clientWidth + 1); mm--) {
+      const c2 = qrCanvas(link, { module: mm, quiet: 3 }); if (!c2) break;
+      c2.style.width = `calc(var(--u) * ${c2.width})`; c2.style.height = `calc(var(--u) * ${c2.height})`; box.replaceChildren(c2);
+    }
+  }
+  /** the players' starters, animated (pre-baked title atlases at raster scale 1) */
+  roomTick(dt) {
+    this.roomT = (this.roomT || 0) + dt;
+    for (const M of this.roomMons || []) {
+      if (!M.sc) {   // the biggest pre-baked title scale whose idle frame fits the card's monster box (art px)
+        const MG = this.app.mtMenuGrid, q = MG && MG.Z ? MG.Z / MG.dpr : 2, box = M.cv.parentElement, hA = box ? box.clientHeight / q : 60, wA = box ? box.clientWidth / q : 80;
+        M.sc = [2.5, 2, 1.75, 1.5, 1.25, 1].find((v) => 46 * v + 8 <= hA && 44 * v + 10 <= wA) || 1;
+      }
+      const e = heroFrames(M.id, M.sc, TITLE_FRAMES, 8, false, undefined, TITLE_CRISP), f0 = e.frames[0]; if (!f0) continue;
+      const f = e.frames[Math.floor(this.roomT * 8 + M.i * 3) % e.n] || f0, cv = M.cv;
+      if (!M.w) { M.w = f0.w + 10; M.h = f0.h + 6; cv.width = M.w; cv.height = M.h; cv.style.width = `calc(var(--u) * ${M.w})`; cv.style.height = `calc(var(--u) * ${M.h})`; }
+      const fi = e.frames.indexOf(f); if (fi === M.fi) continue; M.fi = fi;
+      const g = cv.getContext('2d'); g.imageSmoothingEnabled = false; g.clearRect(0, 0, M.w, M.h);
+      g.fillStyle = 'rgba(12,14,34,.22)'; const sw = Math.round(f0.w * 0.28); for (let j = -2; j <= 2; j++) { const w = Math.round(sw * Math.sqrt(1 - (j * j) / 6.25)); g.fillRect(Math.round(M.w / 2) - w, M.h - 5 + j, w * 2 + 1, 1); }
+      g.drawImage(f.c, Math.round(M.w / 2 - f.ax), Math.round(M.h - 5 - f.ay));
+    }
   }
 
   // ------------------------------------------------------------------ line-up stage (both teams on two lit daises)
@@ -558,6 +991,13 @@ export class Lobby {
         const pose = (!sl && POSE[tm][j]) || { view: 'down', n: 4 };
         out.push({ id: 'trainer_' + look + '_' + (tm ? 'red' : 'blue'), d: tm, x: tm ? -px : px, y: py, dy, flip: tm === 0, n: pose.n, fps: 5, phase: (tm * 3 + j) * 0.37,
           view: pose.view, dim: 0, clean: TRAINER_CRISP, rim: false, mark: sl ? SLOT_COLORS[sl.slot] : null, sl, shadow: 0.5 });
+        // a local player's partner (the starter row) stands at their feet, toward the rival team, a size smaller
+        const st = sl && sl.starter && STARTER_TYPE[sl.starter] ? sl.starter : null;
+        if (st && this.vs && this.vs.scale) {
+          const sc = TITLE_SCALES.reduce((a, v) => (v <= this.vs.scale * 0.62 + 1e-6 ? v : a), TITLE_SCALES[0]);
+          out.push({ id: st, d: tm, x: (tm ? -px : px) + (tm ? -0.3 : 0.3), y: py + 0.42, dy, flip: tm === 0, n: TITLE_FRAMES, fps: 8, phase: j * 0.4,
+            clean: TITLE_CRISP, rim: false, sc, shadow: 0.42, mon: true });
+        }
       }
     }
     return out.sort((a, b) => a.y - b.y);
@@ -632,6 +1072,15 @@ export class Lobby {
   artReady() { return !!(this.vs && this.vs.ready); }
   stageKeys() { return this.vs ? this.vs.keys() : []; }
 
+  /** a 16-art-px element badge (sprite library) as a fresh canvas */
+  elemIcon(el) {
+    if (!this.art || !el) return null;
+    const k = 'el:' + el; let c = this.icons.get(k);
+    if (c === undefined) { try { c = this.art.renderElementIconCanvas(el, 16); } catch { c = null; } this.icons.set(k, c); }
+    if (!c) return null;
+    const e = document.createElement('canvas'); e.width = c.width; e.height = c.height; e.getContext('2d').drawImage(c, 0, 0);
+    return e;
+  }
   icon(id) {
     if (!this.art) return null;
     let c = this.icons.get(id);
@@ -649,7 +1098,10 @@ export class Lobby {
     const head = h('div', 'lb-head', r);
     const title = h('div', 'lb-title px', head), tin = h('div', 'px', title);
     this.orbEl = h('canvas', 'lb-orb', tin); this.orbEl.width = this.orbEl.height = 16; this.orbDone = false; // our capture orb (sprite library icon, 16 art px)
-    const tt = h('div', null, tin); h('small', null, tt, t('lobby.kicker')); h('b', null, tt, t('lobby.title'));
+    const tt = h('div', null, tin); h('small', null, tt, t('lobby.kicker')); this.titleB = h('b', null, tt, t('lobby.title'));
+    this.backBtn = h('div', 'lb-back px', null); this.backBtn.appendChild(triEl(-1, 11)); head.insertBefore(this.backBtn, head.firstChild);
+    this.backBtn.setAttribute('role', 'button'); this.backBtn.setAttribute('aria-label', t('lobby.hint.back'));
+    this.backBtn.addEventListener('click', () => this.roomBack());
     const mode = h('div', 'lb-mode', head);
     // the next free slot: a small join chip top right, beside the mode chip (language: the card's げんご row, L key,
     // or the title's ◀ JA ▶ tab — no third header chip)
@@ -665,6 +1117,7 @@ export class Lobby {
     this.tags = [];
     this.vs = new HeroStage(this.vsCanvas, { cast: [], motes: 16, seed: 5 });
     this.vsKey = '';
+    this.roomEl = h('div', 'lb-room', main); this.roomEl.hidden = true; this.roomKey_ = ''; // online room (renderRoom)
     const cards = h('div', 'lb-cards', main);
     this.cards = [];
     for (let i = 0; i < 4; i++) { const c = h('div', 'card', cards); c.style.setProperty('--pc', SLOT_COLORS[i]); this.cards.push({ el: c, key: '' }); }
@@ -679,7 +1132,7 @@ export class Lobby {
 
   cardKey(sl) {
     const net = this.app.mtNet, on = this.online ? this.online.view + (net && net.isHost ? 'H' : '') + (net && net.isHost && net.canStart() ? 'S' : '') : '';
-    return sl ? [sl.slot, sl.device, sl.team, sl.spec, sl.look, sl.ready, sl.row, sl.wasd, sl.inputType, on].join('|') : 'empty|' + this.slots.length + '|' + this.slots.some((x) => x.device === 'kbm');
+    return sl ? [sl.slot, sl.device, sl.team, sl.spec, sl.look, sl.starter, sl.ready, sl.row, sl.wasd, sl.inputType, on].join('|') : 'empty|' + this.slots.length + '|' + this.slots.some((x) => x.device === 'kbm');
   }
 
   render() {
@@ -692,6 +1145,8 @@ export class Lobby {
     const net = this.app.mtNet, on = this.online, inRoom = !!(on && on.view === 'room' && net && net.inRoom());
     const mem = inRoom ? net.members() : null;
     this.root.classList.toggle('online', !!on);
+    this.root.classList.toggle('code', !!(on && on.view === 'code'));
+    setText(this.titleB, on ? t('menu.friend') : t('lobby.title'));
     setText(this.modeChip, inRoom ? net.code + ' · ' + mem.filter((m) => m.ok).length + '/6' : on ? t('net.title')
       : versus ? t('lobby.mode.versus', { n }) : n > 1 ? t('lobby.mode.coop', { n }) : n === 1 ? t('lobby.mode.solo') : t('lobby.mode.none'));
     this.modeChip.classList.toggle('vs', !on && versus);
@@ -702,10 +1157,12 @@ export class Lobby {
     if (!this.orbDone && this.orbEl) { const ic = this.icon('trainer/capture'); if (ic) { const g = this.orbEl.getContext('2d'); g.imageSmoothingEnabled = false; g.clearRect(0, 0, 16, 16); g.drawImage(ic, Math.round((16 - ic.width) / 2), Math.round((16 - ic.height) / 2)); this.orbDone = true; } }
     const joinAt = on ? -1 : this.freeSlot(); // the next free slot is offered by the join chip; empty cards stay hidden
     this.joinChip(joinAt);
-    this.renderOnline(net, inRoom, mem);
+    if (on && on.view === 'code') this.renderOnline(net, false, null);   // the code entry card (old online panel)
+    else if (this.netCard) { this.netCard.el.hidden = true; this.memCard.el.hidden = true; }
+    if (this.roomEl) { const show = !!on && on.view !== 'code'; if (this.roomEl.hidden === show) this.roomEl.hidden = !show; if (show) this.renderRoom(net, mem); }
     for (let i = 0; i < 4; i++) {
       const sl = this.slots.find((x) => x.slot === i) || null, C = this.cards[i];
-      const hide = !sl || (on && !inRoom);   // online panel open: it replaces the player card
+      const hide = !sl || !!on;   // online: the room screen (renderRoom) replaces the player card
       if (C.el.hidden !== hide) C.el.hidden = hide;
       if (hide) continue;
       const key = this.cardKey(sl) + '|' + (this.art ? 1 : 0);
@@ -717,18 +1174,19 @@ export class Lobby {
     if (on) {   // online: who we wait for
       const can = inRoom && net.canStart();
       const others = inRoom ? mem.filter((m) => !m.me && m.ok) : [];
-      setText(this.status, !inRoom ? (net && net.joining ? t('net.joining', { code: net.joining }) : net && net.available() ? t('net.bots') : '')
-        : net.isHost ? (can && others.length ? t('net.canStart') : others.length ? t('net.waitReady') : t('net.bots'))
-          : others.every((m) => m.rd || m.host) && this.slots[0] && this.slots[0].ready ? t('net.waitHost') : t('net.waitReady'));
+      setText(this.status, !inRoom ? (net && net.joining ? t('net.joining', { code: net.joining }) : '')
+        : !others.length ? t('room.status.alone')
+          : net.isHost ? (can ? t('room.status.go') : t('net.waitReady'))
+            : this.slots[0] && this.slots[0].ready ? t('net.waitHost') : t('net.waitReady'));
       this.status.classList.toggle('go', !!can && others.length > 0);
     } else if (this.countdown >= 0) { setText(this.status, t('lobby.starting', { n: Math.max(1, Math.ceil(this.countdown)) })); this.status.classList.add('go'); }
     else {
       this.status.classList.remove('go');
-      setText(this.status, n === 0 ? (this.app.mtInputMode === 'touch' ? t('lobby.foot.joinTouch') : t('lobby.foot.wait')) : t('lobby.foot.ready', { ready, n }));
+      setText(this.status, n === 0 ? (this.inputView() === 'touch' ? t('lobby.foot.joinTouch') : t('lobby.foot.wait')) : t('lobby.foot.ready', { ready, n }));
     }
     // back hint: glyphs of whoever is here (pad first)
     const pad = this.slots.find((x) => x.device !== 'kbm'), kb = this.slots.find((x) => x.device === 'kbm');
-    const fam = pad ? glyphFamily(pad.inputType) : kb ? (kb.inputType === 'touch' ? null : 'kbm') : this.app.mtInputMode === 'kbm' ? 'kbm' : this.app.mtInputMode === 'touch' ? null : 'ps';
+    const vm = this.inputView(), fam = pad ? glyphFamily(pad.inputType) : kb ? (kb.inputType === 'touch' ? null : 'kbm') : vm === 'kbm' ? 'kbm' : vm === 'touch' ? null : 'ps';
     // footer controls (one line, pixel glyphs): the card's controls live here, not in a row of keycaps on the card
     const touchSl = pad ? false : this.slots.some((x) => x.device === 'kbm' && x.inputType === 'touch');
     const bk = (n ? 'b' : 't') + (fam || '-') + getLang() + (touchSl ? 'T' : '') + (fontReady() ? 1 : 0) + (on && !inRoom ? 'N' : '');
@@ -755,7 +1213,7 @@ export class Lobby {
       el.classList.add('empty'); if (full) el.classList.add('full');
       h('div', 'pn', el, 'P' + (i + 1));
       const kb = this.slots.some((x) => x.device === 'kbm');
-      const md = this.app.mtInputMode;
+      const md = this.inputView();
       const art = h('div', 'art', el);
       if (!kb && md === 'touch') art.innerHTML = TOUCH_ART;
       else { const w = h('div', 'who', art); C.sil = h('canvas', 'sil', w); h('b', null, w, '?'); C.silDone = false; } // mystery challenger
@@ -783,6 +1241,11 @@ export class Lobby {
       r.onclick = () => { if (!sl.ready) { sl.row = R.indexOf(row); this.dirty = true; this.render(); } };
       return m;
     };
+    if (R.includes('starter')) { // the first monster: element icon + name
+      const st = mk('starter', t('lobby.row.starter'), '');
+      const ei = this.elemIcon(STARTER_TYPE[sl.starter]); if (ei) st.appendChild(ei);
+      st.appendChild(document.createTextNode(formName(sl.starter)));
+    }
     mk('team', t('lobby.row.team'), TEAM_NAME[sl.team](), sl.team ? 'red' : 'blue');
     const sv = mk('spec', t('lobby.row.spec'), '');
     const ic = this.icon(SPEC_ICON[sl.spec]); if (ic) { const c = document.createElement('canvas'); c.width = ic.width; c.height = ic.height; c.getContext('2d').drawImage(ic, 0, 0); sv.appendChild(c); }
@@ -791,7 +1254,6 @@ export class Lobby {
     if (this.rows(sl).includes('move')) mk('move', t('lobby.row.move'), sl.wasd ? t('lobby.move.wasd') : t('lobby.move.mouse'));
     mk('lang', t('lobby.row.lang'), LANG_LABEL[getLang()]);
     const room = this.online && this.online.view === 'room', net = this.app.mtNet;
-    mk('net', t('net.row'), room ? t('net.online') : t('net.local'), room ? 'blue' : ''); // Mode: Local / Online (◀ ▶ switches)
     h('div', 'desc px', el, specShort(sl.spec));
     const host = room && net && net.isHost, can = host && net.canStart();
     const rb = h('div', 'readybtn px' + (R[sl.row] === 'ready' && !sl.ready && (!host || can) ? ' f' : '') + (host && !can ? ' dim' : ''), el,
@@ -811,7 +1273,7 @@ export class Lobby {
     const show = slot >= 0;
     if (J.hidden === show) J.hidden = !show;
     if (!show) return;
-    const kb = this.slots.some((x) => x.device === 'kbm'), md = this.app.mtInputMode;
+    const kb = this.slots.some((x) => x.device === 'kbm'), md = this.inputView();
     const k = slot + '|' + kb + '|' + md + '|' + getLang();
     if (J.dataset.k === k) return;
     J.dataset.k = k; J.style.setProperty('--pc', SLOT_COLORS[slot]);
@@ -899,7 +1361,7 @@ export class Lobby {
   onlineActivate(item) {
     const net = this.app.mtNet, O = this.online, sl = this.slots[0];
     if (!item || item.dis) { this.sfx('deny'); return; }
-    if (item.id === 'back') { if (O.view === 'code') { O.view = 'menu'; O.focus = 0; this.sfx('click'); } else this.closeOnline(); return; }
+    if (item.id === 'back') { if (O.view === 'code') { O.view = net && net.inRoom() ? 'room' : 'fail'; O.focus = 0; this.sfx('click'); } else this.closeOnline(); return; }
     if (item.id === 'name') { const inp = this.netCard.el.querySelector('.nmi'); if (inp) inp.focus(); return; }
     const enterRoom = (p) => {
       if (sl) net.setMine({ tm: sl.team, sp: sl.spec, lk: sl.look, rd: 0 });

@@ -9,6 +9,7 @@ import { MtFx } from './fx.js';
 import { SharedCamera } from './camera.js';
 import { AmbientSystem } from './ambient.js';   // ambient-life artist: world animation layer (registration only)
 import { ShaderPrewarm } from './prewarm.js';   // architecture: shader precompile (app.mtPrewarm, QA bug 9)
+import { PerfSystem } from './perf.js';          // perf: device-aware quality + adaptive render scale governor (app.mtPerf)
 
 export default class MtRender {
   constructor(ctx) {
@@ -16,6 +17,7 @@ export default class MtRender {
     this.parts = [];
     this.errors = {};
     const add = (name, make) => { try { this.parts.push({ name, inst: make(), fails: 0 }); } catch (e) { console.error('[mt-render] ctor ' + name, e); } };
+    add('perf', () => (this.perf = new PerfSystem(ctx)));     // first: the render scale is applied before sprites read the scene size
     add('sprites', () => (this.sprites = new SpriteSystem(ctx)));
     add('fx', () => new MtFx(ctx));
     add('camera', () => new SharedCamera(ctx));

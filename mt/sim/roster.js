@@ -34,13 +34,17 @@ const NAMES = [
  * @property {string} [inputType] 'kbm'|'dualsense'|'dualshock'|'xbox'|'gamepad'
  * @property {string} [padId] Gamepad.id
  * @property {boolean} [wasd] keyboard local uses WASD movement
- * @property {string} [starter] optional form id to start with (debug/tests)
+ * @property {string} [starter] starter monster: 'cindle' | 'puddlet' | 'sproutle' (mt/data/options.js STARTERS); omitted
+ *   (or any other value) = picked deterministically from the match seed (team-mates' picks first, so a team shows varied
+ *   starters); 'none' = no monster (tests / fixtures). Level = options.js STARTER_LEVEL.
+ * @property {string} [starterForm] debug / tests only: start with this exact form id instead (any form)
  */
 
 /**
  * @param {string} [_champion] ignored (legacy signature)
  * @param {string[][]} [names] [[team0 names],[team1 names]] (legacy signature; first name of team 0 = local human)
- * @param {{humans?:number, humanTeams?:number[], specs?:string[][], starters?:string[][]}} [opts]
+ * @param {{humans?:number, humanTeams?:number[], specs?:string[][], starters?:string[][]|false}} [opts]
+ *   starters: per team / slot form ids, or `false` = nobody starts with a monster (fixtures)
  * @returns {PlayerEntry[]}
  */
 export function defaultRoster(_champion, names, opts = {}) {
@@ -52,11 +56,13 @@ export function defaultRoster(_champion, names, opts = {}) {
       const nm = (names && names[team] && names[team][i]) || NAMES[team][i];
       out.push({
         team, champion: TRAINER_ID, name: trainerName(!human && nm === 'You' ? 'Ace' : nm), // i18n: display name in the current language
+        nameKey: !human && nm === 'You' ? 'Ace' : nm,   // canonical (English) key: display only, see trainers.js displayName
         bot: !human, role: LANE_ROLES[i % LANE_ROLES.length],
         spec: (opts.specs && opts.specs[team] && opts.specs[team][i]) || SPEC_IDS[(i + team) % SPEC_IDS.length],
         device: human ? (i === 0 ? 'kbm' : 'pad:' + (i - 1)) : undefined,
         localSlot: human ? i : undefined,
-        starter: opts.starters && opts.starters[team] ? opts.starters[team][i] : undefined,
+        starter: opts.starters === false ? 'none' : opts.starters && opts.starters[team] ? opts.starters[team][i] : undefined,
+        starterForm: opts.starterForms && opts.starterForms[team] ? opts.starterForms[team][i] : undefined,
       });
     }
   }
@@ -74,13 +80,14 @@ export function defaultRoster(_champion, names, opts = {}) {
  * @property {string} [inputType]
  * @property {string} [padId]
  * @property {boolean} [wasd]
+ * @property {string} [starter] starter pick ('cindle'|'puddlet'|'sproutle'); omitted = auto (see PlayerEntry.starter)
  */
 
 /**
  * 3v3 roster from lobby slots: per team the humans (P order) then bots. Bots take the specs their team is missing
  * first (so a team is not three Healers by accident), lanes are dealt top/mid/bot in order.
  * @param {LobbySlot[]} slots
- * @param {{starters?: Record<number,string>}} [opts]  starters keyed by lobby slot (tests)
+ * @param {{starters?: Record<number,string>}} [opts]  starters keyed by lobby slot (else LobbySlot.starter, else auto)
  * @returns {PlayerEntry[]}
  */
 export function lobbyRoster(slots, opts = {}) {
@@ -96,11 +103,12 @@ export function lobbyRoster(slots, opts = {}) {
         out.push({
           team, champion: TRAINER_ID, name: trainerName(h.name || 'Player ' + (h.slot + 1)), bot: false, role: LANE_ROLES[i], // i18n
           spec: h.spec, look: h.look || h.spec, device: h.device, localSlot: h.slot, inputType: h.inputType || (h.device === 'kbm' ? 'kbm' : 'gamepad'),
-          padId: h.padId || '', wasd: !!h.wasd, starter: opts.starters ? opts.starters[h.slot] : undefined,
+          padId: h.padId || '', wasd: !!h.wasd, starter: opts.starters ? opts.starters[h.slot] : h.starter,
         });
       } else {
         const spec = missing.length ? missing.shift() : SPEC_IDS[(i + team + b) % SPEC_IDS.length];
-        out.push({ team, champion: TRAINER_ID, name: trainerName(BOT_NAMES[team][b % BOT_NAMES[team].length]), bot: true, role: LANE_ROLES[i], spec, look: spec });
+        const key = BOT_NAMES[team][b % BOT_NAMES[team].length];
+        out.push({ team, champion: TRAINER_ID, name: trainerName(key), nameKey: key, bot: true, role: LANE_ROLES[i], spec, look: spec });
         b++;
       }
     }

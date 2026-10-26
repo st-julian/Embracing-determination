@@ -98,13 +98,16 @@ function configureLegacyBoss(W) {
 
 function campDefs(mt, list) {
   const out = [];
+  const M = mt.rules ? mt.rules.M : null;   // QUICK mode keeps only the habitats near mid (+ the river boss)
   for (const c of list) {
     const key = String(c.id).replace(/^(blue|red)_/, '');
     if (HABITAT_LINES[key]) {
+      if (M && M.camps && !M.camps.includes(key)) continue;
       out.push({ ...c, mtLine: HABITAT_LINES[key], respawn: JUNGLE.respawn, firstSpawn: JUNGLE.firstSpawn, buff: null });
-    } else if (c.id === 'drake') out.push({ ...c, mtBoss: true, firstSpawn: BOSS.firstSpawn, respawn: BOSS.respawn });
+    } else if (c.id === 'drake') out.push({ ...c, mtBoss: true, firstSpawn: (M && M.bossFirstSpawn) || BOSS.firstSpawn, respawn: BOSS.respawn });
     // skitters + tyrant dropped
   }
+  if (M && M.meadows === false) return out;
   for (const m of MEADOWS) {
     out.push({ id: 'blue_' + m.id, x: m.x, y: m.y, side: 0, respawn: JUNGLE.respawn, firstSpawn: 0, mtMeadow: m.lines, monster: 'mt_meadow' });
     out.push({ id: 'red_' + m.id, x: m.y, y: m.x, side: 1, respawn: JUNGLE.respawn, firstSpawn: 0, mtMeadow: m.lines, monster: 'mt_meadow' });

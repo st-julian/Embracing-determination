@@ -11,6 +11,7 @@ game/mt/
     species.js       6 lines × 3 forms, base stats, heights, evolve levels
     abilities.js     A1/A2/Final-upgrade numbers per line (+ abilityFor(line, slot, stage))
     balance.js       every other DESIGN number (trainer, specs, capture, XP, evolution, minions, towers, jungle)
+    options.js       match options contract: DEFAULT_OPTIONS, normalizeOptions, STARTERS, BOT_SKILL, DIFFICULTY, MODES
   sim/             deterministic simulation (30 Hz, no Math.random / Date.now — use util.rand01)
     index.js         MTWorld hub (= world.mt): hook dispatch, impl table, damage scalers, stats, log, error guard
     util.js          shared helpers (rand01, distances, isPet/isWild/isTrainer, teleport)
@@ -25,7 +26,9 @@ game/mt/
     structures.js    tower target priority, +25 %/shot ramp
     jungle.js        habitats, starter meadows, wild level scaling, river boss
     debug.js         world.mt.debug: scenario fixtures, give/setLevel/teleport/advance/summary
-    qa.js            world.mt.debug.qa: invariants, DESIGN audit, fuzz, state hash, scripted human (QA)
+    qa.js            world.mt.debug.qa: invariants, DESIGN audit, fuzz, state hash, scripted human (QA), pacing tracker
+    rules.js         world.mt.rules: match options (difficulty, QUICK/CLASSIC mode), starters, handicaps (installed first)
+    guide.js         objective guide for the UI arrow: app.mtGuide(unitId) -> {id, x, y, ...}
   ai/              trainer bot brain (replaces the legacy bot controller): trainerBot.js (utility brain), team.js
                    (lanes/coordination), assess.js (combat maths), geo.js (map knowledge), overlay.js (?botdebug). docs/AI.md
   i18n/            localization core + DOM side (ja default, en), strings/*.js, fonts/. docs/I18N.md
@@ -62,6 +65,7 @@ game/mt/
 | Trainers / specs | `mt/sim/trainers.js` (the command router lives here: coordinate when adding command types) |
 | Lane / minions / structures / jungle | `mt/sim/minions.js`, `mt/sim/structures.js`, `mt/sim/jungle.js` |
 | AI | `mt/ai/*` (keep `install(mt)` in trainerBot.js) |
+| Gameplay & pacing | `mt/data/options.js`, `mt/sim/rules.js`, `mt/sim/guide.js`, difficulty / mode hooks across `mt/sim/*` + `mt/ai/*`, `docs/BALANCE.md` "Difficulty & pacing", `qa.pacing`, `tools/mt-smoke.cjs --batch/--difficulty/--mode` |
 | Sprites / art integration | `mt/render/sprites.js`, `mt/render/painter/*` (art itself: `game/art/` — art agent) |
 | VFX / audio | `mt/render/fx*.js` |
 | Ambient life (world animation) | `mt/render/ambient*.js` |
@@ -127,6 +131,7 @@ Shared helpers (`util.js`, `events.js`) accept additive edits from anyone; annou
 | bodyMass / speedMul | `mw.bodyMass` / `mw.moveSpeedOf` | `unit.mass`, `unit.mtSpeedMul` |
 | botPerception | bot `oE.update` | only NEUTRAL monsters count as jungle camps |
 | app | `window.__moba` | `$.mt = MT_NS` |
+| options ×2 | `Vk` (`app.newMatch`) | `options` → `new ww({options})` → `world.options` → `world.mt.rules` (mt/sim/rules.js) |
 | subsystems | `Rk` | `mt-render`, `mt-ui` |
 | hideChampionModel ×2 | `champions-*.js` update | skip units with `mtSprite` |
 | hideCreepModel | `creeps-*.js` update | minions/monsters with `mtSprite` are drawn by `mt/render/sprites.js` only |
@@ -200,6 +205,57 @@ These high-frequency events (`mt_hit`, `mt_status`) go to `world.events` only (n
 * No float colour buffers (`globalThis.__mtFloatRT === false`): render targets requested as Half/Float are created as
   UnsignedByte by the floatRT hook (HDR highlights clip, the image still tone-maps correctly).
 * Fullscreen: hidden where neither `document.fullscreenEnabled` nor `webkitFullscreenEnabled` (iPhone).
+
+## Match options, starters, objective guide (gameplay & pacing owner: `mt/data/options.js`, `mt/sim/rules.js`, `mt/sim/guide.js`)
+
+Rules: docs/DESIGN.md §2 "Match options", §3 "Starter monster", §15 "Modes"; numbers + measurements: docs/BALANCE.md
+"Difficulty & pacing". Everything here is deterministic (roster + seed + sim state only), so online peers agree.
+
+```js
+import { DEFAULT_OPTIONS, normalizeOptions, validateOptions, DIFFICULTY_IDS, MODE_IDS, STARTERS, STARTER_IDS, STARTER_LEVEL } from '/mt/data/options.js';
+// also: __moba.mt.options (same module)
+DEFAULT_OPTIONS                 // { difficulty: 'easy', mode: 'quick' }
+normalizeOptions(o)             // -> { difficulty, mode } (invalid / missing fields -> default; never throws)
+validateOptions(o)              // -> { ok, options, errors[] }
+STARTERS                        // [{ id:'cindle'|'puddlet'|'sproutle', form, line, types, level, color, role, ranged, stats{hp,atk,def,mag,spd,as,range},
+                                //    evolvesTo[], strongVs, weakTo, name (localized getter), a1Name (localized getter) }]
+app.newMatch({ seed, players, options })   // options -> world.options -> world.mt.rules.options ([MT-HOOK] options in Vk)
+players[i].starter = 'cindle'   // per roster entry; omitted = picked from the seed (team-mates' picks first, varied per team),
+                                // 'none' = no monster (fixtures / tests); level = STARTER_LEVEL (3), given on the first tick
+lobbyRoster(slots)              // LobbySlot.starter is copied to the entry; defaultRoster(_, _, {starters:false}) = nobody starts with one
+```
+* `world.mt.rules` (mt/sim/rules.js, installed FIRST): `options`, `mode`, `difficulty`, `quick`, `lanes` (QUICK: `['mid']`),
+  `laneActive(lane)`, `humanTeams()` / `pve()` (frozen at match start from the roster's `bot` flags), `starterFor(player)`,
+  `botSkill(trainer)` (BOT_SKILL profile), `respawnMult` / `faintMult` / `xpMult` / `hpMult` / `dmgMult` / `comeback(team)`.
+* QUICK mode removes the top/bot towers and inhibitors from `world.structures` at match start (HUD / minimap / renderer simply
+  never see them) and spawns waves only in mid; `trainer.mtTrainer.starter` = the starter form id the trainer began with.
+  The starter arrives through the normal party path (`mt_summon`, `mt_party {reason:'starter'}`) on tick 1.
+* Online: the host's match config carries the same `options` and every human's `starter` (mt/net/match.js `go.o` / 6th `pl`
+  field, netplay owner); every peer then calls `app.newMatch({seed, players, options})`.
+* **Objective guide**: `app.mtGuide(unitId = app.playerId)` (published on the app by rules.js; also `__moba.mt.guide(world,
+  unitId)`) → `{id, x, y, targetId, name, key, urgency 0..1, dist, form?, seconds?, now?, chance?, wobbling?, bench?, steps,
+  step, t}` with `id` ∈ `respawn | heal | evolve | catch | defend | help | push | lane` — always one while the trainer lives
+  (priority: mt/sim/guide.js header). `key` = `'guide.<id>'`, or `'guide.catchNow'` when `now` (weak wild in the capture
+  window: throw the orb; `chance` = the roll incl. the player's catch assist); `wobbling` = my orb is on it right now;
+  `bench` = 'evolve' for the benched monster (the evolve command evolves it in its orb). `steps` = `{catch, lane, evolve,
+  push}`: world time each was REALLY achieved this match (null = not yet; per-match sim state, nothing to store), `step` =
+  the first one not done. Read-only, cached per tick — call it every frame. Positions are sim metres (render z = y).
+* **Player assists** (DESIGN §2 "Player assists", `ASSIST` in options.js): `rules.assisted(trainer)`, `rules.assist` (the
+  profile), `rules.focusHuman(team, target)`, `rules.trainerHpMult(trainer)`, `rules.safeEvolve()`, `rules.captureBonus(trainer)`
+  (pass it as `captureChance(u, now, bonus)` to show the chance the throw really rolls), `rules.holdFor(pet, wild)`.
+  Event `mt_assist {trainer, team, kind, x, y, ...}` — kind `guard {until}` (respawn guard), `rescue {until}` (low-HP
+  shield + haste), `potion` (the monster drank by itself), `credit {victim}` (a team-mate's kill credited to the human),
+  `hold {target, until}` (capture window opened: my monster holds its attacks, throw now).
+* **QUICK time limit** (DESIGN §15): `mt_time_limit {phase:'warn', at, score:[blue, red]}` 60 s before 15:00, then
+  `{phase:'end', at, winner, score}` and the loser's Nexus falls (the normal victory flow follows).
+* **Spawn ring** (DESIGN §11): `rules.spawnPoint(team, slot)`; trainers spawn / respawn there (`unit.spawnX/spawnY`).
+* **Names** (display only, DESIGN §14): bots `unit.name` (localized on every peer) + `unit.mtNameKey` (`'name.<Key>'`);
+  humans `unit.mtPlayerNo` (1-based: online seat / local slot) + `unit.mtDefaultName` (true = no typed name: show
+  "あなた / You" for the local player, `P<n>` for the others).
+* Tests / tools: `tools/mt-smoke.cjs --difficulty easy|normal|hard --mode quick|classic` (any match type) and
+  `--batch --seeds 1-8 --humans 1` (win rate of the scripted-human team + `qa.pacing()` first fight / walking % / deaths per
+  minute), `--batch --policy masher` (the casual button masher, `qa.masher(trainer)`: deaths, kills, assists, monster KOs,
+  first catch / evolution); `__moba.mt.debug.qa.pacing()` in the console; `node --test tests/rules-world.test.mjs`.
 
 ## Testing
 

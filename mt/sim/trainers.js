@@ -18,7 +18,7 @@ import * as monsters from './monsters.js';
 import * as capture from './capture.js';
 import * as progression from './progression.js';
 import * as combat from './combat.js';
-import { t } from '../i18n/index.js'; // player-facing refusal texts (mt_deny)
+import { t, trainerName } from '../i18n/index.js'; // player-facing refusal texts (mt_deny); display names
 
 /**
  * @typedef {Object} TrainerState
@@ -112,10 +112,53 @@ export function convertToTrainer(mt, unit, player = {}) {
     confirm: null, wasAlive: true, avgLevel: 0, recallPending: false,
     device: player.device || null,
   };
-  if (unit.mtTrainer.spec === 'healing') def.base.hp = TRAINER.hp * (1 + SPECS.healing.passive.trainerHp);
+  unit.mtPlayerIndex = player.index ?? idx;   // roster entry (rules.js: bot slot / human handicap are fixed per match)
+  displayName(mt, unit, player);
+  // spawn / respawn point: off the fountain statue, the same spot on every peer (rules.js spawnPoint, options SPAWN_RING)
+  const slot = mt.world.champions.filter((c) => c.team === unit.team).indexOf(unit);
+  const sp = mt.rules && mt.rules.spawnPoint && slot >= 0 ? mt.rules.spawnPoint(unit.team, Math.min(2, slot)) : null;
+  if (sp && mt.world.nav && mt.world.nav.landingPoint) {
+    const fx = unit.spawnX ?? unit.x, fy = unit.spawnY ?? unit.y, p = mt.world.nav.landingPoint(fx, fy, sp.x, sp.y);
+    unit.spawnX = unit.x = unit.prevX = p.x; unit.spawnY = unit.y = unit.prevY = p.y;
+    unit.facing = Math.atan2(60 - p.y, 60 - p.x);
+  }
+  def.base.hp = TRAINER.hp * (unit.mtTrainer.spec === 'healing' ? 1 + SPECS.healing.passive.trainerHp : 1) * (mt.rules ? mt.rules.trainerHpMult(unit) : 1);
   mt.L.recomputeStats(unit);
   unit.hp = unit.maxHp;
-  if (player.starter) mt.world.schedule(0, () => monsters.giveMonster(mt, unit, player.starter, 1, { deploy: true }));
+  // starter monster (DESIGN §3, rules.js starterFor: the roster pick, else deterministic from the seed); given on the
+  // first tick so every trainer exists first (unit ids stay in roster order)
+  const starter = mt.rules ? mt.rules.starterFor(player) : player.starter || null;
+  if (starter) {
+    const lvl = mt.rules ? mt.rules.starterLevel : 1;
+    unit.mtTrainer.starter = starter;
+    mt.world.schedule(0, () => { if (!unit.mtTrainer.party.length) monsters.giveMonster(mt, unit, starter, lvl, { deploy: true, reason: 'starter' }); });
+  }
+}
+
+/** Trainer respawn time (s): DESIGN §3 `6 + 1.6 × avg` (max 30) × mode / difficulty multiplier (rules.js). */
+export function respawnTime(mt, trainer, avg = avgPartyLevel(trainer)) {
+  const base = Math.min(TRAINER.respawn.max, TRAINER.respawn.base + TRAINER.respawn.perAvgLevel * avg);
+  return base * (mt.rules ? mt.rules.respawnMult(trainer) : 1);
+}
+
+const DEFAULT_HUMAN_NAMES = new Set(['', 'You', 'あなた', 'Trainer', 'トレーナー', 'Player', 'プレイヤー']);
+/**
+ * Display-only name data (the sim never reads names; the determinism check runs the same seed in two languages):
+ *   bots      `unit.name` = the localized bot name on every peer (`name.<Key>` table), `unit.mtNameKey` = 'name.<Key>'
+ *   humans    `unit.mtPlayerNo` = 1-based player number (online seat / local slot order: P1, P2 ...), `unit.mtDefaultName`
+ *             = true when the player did not type a name (UI: "あなた / You" for the local player, "P1 / P2" for the others)
+ */
+function displayName(mt, unit, player) {
+  if (player.bot) {
+    const key = String(player.nameKey || player.name || '');
+    unit.name = trainerName(key) || unit.name;
+    unit.mtNameKey = 'name.' + key;
+    return;
+  }
+  const humans = (mt.world.players || []).filter((p) => !p.bot);
+  const no = player.netSlot != null ? player.netSlot + 1 : player.localSlot != null ? player.localSlot + 1 : humans.indexOf(player) + 1;
+  unit.mtPlayerNo = no > 0 ? no : 1;
+  unit.mtDefaultName = !player.name || DEFAULT_HUMAN_NAMES.has(String(player.name).trim()) || /^(Player|プレイヤー) ?\d+$/.test(String(player.name).trim());
 }
 
 /** Average level of the party (0 with no monsters). */
@@ -135,7 +178,7 @@ function upkeep(mt) {
     const avg = avgPartyLevel(u);
     if (Math.abs(avg - T.avgLevel) > 1e-6) {
       T.avgLevel = avg;
-      const mult = T.spec === 'healing' ? 1 + SPECS.healing.passive.trainerHp : 1;
+      const mult = (T.spec === 'healing' ? 1 + SPECS.healing.passive.trainerHp : 1) * (mt.rules ? mt.rules.trainerHpMult(u) : 1);
       u.def.base.hp = (TRAINER.hp + TRAINER.hpPerAvgLevel * avg) * mult;
       u.level = Math.max(1, Math.round(avg));
       u.statsDirty = true;
@@ -143,7 +186,7 @@ function upkeep(mt) {
     // death / respawn transitions
     if (!u.alive && T.wasAlive) { T.wasAlive = false; T.recallPending = true; }
     if (T.recallPending) { T.recallPending = false; monsters.recallActive(mt, u, 'trainer_dead'); T.swap = null; }
-    if (u.alive && !T.wasAlive) { T.wasAlive = true; monsters.deployActive(mt, u, 'respawn'); }
+    if (u.alive && !T.wasAlive) { T.wasAlive = true; monsters.deployActive(mt, u, 'respawn'); if (mt.rules) mt.rules.onRespawn(u); }
     if (T.confirm && t > T.confirm.until) T.confirm = null;
     mirrorCooldowns(mt, u);
   }
@@ -152,7 +195,7 @@ function upkeep(mt) {
 function onKill(mt, victim) {
   const T = victim.mtTrainer; if (!T) return;
   const avg = avgPartyLevel(victim);
-  victim.respawnAt = mt.world.time + Math.min(TRAINER.respawn.max, TRAINER.respawn.base + TRAINER.respawn.perAvgLevel * avg);
+  victim.respawnAt = mt.world.time + respawnTime(mt, victim, avg);
   T.recallPending = true;
   mt.stats.trainerDeaths++;
 }

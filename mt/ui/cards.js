@@ -23,7 +23,7 @@ function hpBar(cls = '') {
 }
 function setHp(b, frac) {
   frac = Math.max(0, Math.min(1, frac || 0));
-  if (b.last >= 0 && frac < b.last - 0.02) { setCls(b.el, 'hit', false); void b.el.offsetWidth; setCls(b.el, 'hit', true); }
+  if (b.last >= 0 && frac < b.last - 0.02) { setCls(b.el, 'dmg', false); void b.el.offsetWidth; setCls(b.el, 'dmg', true); }
   b.last = frac;
   setScaleX(b.fl, frac); setScaleX(b.tr, frac);
   setCls(b.el, 'mid', frac <= 0.5 && frac > 0.2); setCls(b.el, 'low', frac <= 0.2);
@@ -31,9 +31,9 @@ function setHp(b, frac) {
 
 /** Ability button (big 30 px or small 20 px). */
 function abButton(action, small) {
-  const el = h('div.ab' + (small ? '.sm' : '')), ic = pxCanvas(small ? 16 : 26, small ? 16 : 26, 'ic');
+  const el = h('div.mt-ab' + (small ? '.sm' : '')), ic = pxCanvas(small ? 16 : 26, small ? 16 : 26, 'ic');
   const cd = h('i.cd'), num = h('span.num'), key = h('span.key');
-  el.append(ic, cd, num, key, h('i.hit'));   // .hit: >= 48 CSS px tap area in the touch layout
+  el.append(ic, cd, num, key, h('i.mt-tap'));   // .mt-tap: >= 48 CSS px tap area in the touch layout
   return { el, ic, cd, num, key, action, small, iconId: '', glyph: '', cool: false, flashT: 0 };
 }
 const AB_SIZE = { big: 26, sm: 16, xs: 14 };
@@ -83,7 +83,8 @@ export class SlotCard {
     this.nm = h('span.nm'); this.types = h('span.types'); this.typeKey = '';
     this.mhp = hpBar(); this.hpn = h('div.hpn'); this.mxp = hpBar('xp');
     this.status = h('div.status');
-    this.info = h('div.pn.info', null, this.porEl, this.lvb, this.evotag,
+    this.mine = pxCanvas(9, 7, 'mine');   // "yours" chevron in the local colour (the same marker floats over the monster)
+    this.info = h('div.pn.info', null, this.porEl, this.mine, this.lvb, this.evotag,
       h('div.row1', null, this.nm, this.types),
       h('div.hpl', null, h('span.lab', { text: tr('card.hp', 'HP') }), this.mhp.el), this.hpn,
       h('div.xpl', null, h('span.lab', { text: tr('card.xp', 'XP') }), this.mxp.el), this.status);
@@ -104,7 +105,7 @@ export class SlotCard {
     // touch: the action buttons are tappable (only matter once a touch happened)
     const tap = (b, cmd) => b.el.addEventListener('pointerdown', (e) => {
       if (e.pointerType !== 'touch') return; e.stopPropagation(); e.preventDefault();
-      const w = hud.app.world; if (!w) return; const c = typeof cmd === 'function' ? cmd(w) : cmd; if (c) w.command(this.unitId, c);
+      const w = hud.app.world; if (!w || b.el.classList.contains('lock')) return;   // locked moves are not buttons const c = typeof cmd === 'function' ? cmd(w) : cmd; if (c) w.command(this.unitId, c);
       setCls(b.el, 'press', true); setTimeout(() => setCls(b.el, 'press', false), 120);
     });
     tap(this.bCap, (w) => this.captureCmd(w)); tap(this.bSkill, { type: 'trainerSkill' }); tap(this.bPot, { type: 'potion' });
@@ -116,7 +117,7 @@ export class SlotCard {
       if (e.pointerType !== 'touch' || !this.tmode || !hud.app.world) return; e.stopPropagation(); e.preventDefault();
       hud.app.world.command(this.unitId, { type: 'swap' }); setCls(this.bench, 'press', true); setTimeout(() => setCls(this.bench, 'press', false), 120);
     });
-    this.bench.appendChild(h('i.hit'));
+    this.bench.appendChild(h('i.mt-tap'));
     this.state = { a1: {}, a2: {}, capture: {}, skill: {}, potion: {}, swap: {}, recall: {}, evolve: { ready: false, evolving: false }, bench: null, hasMon: false, alive: true };
   }
 
@@ -158,6 +159,7 @@ export class SlotCard {
     }
     setCls(this.root, 'lc', multi); setCls(this.root, 'pn', multi); setCls(this.root, 'tc', !!tmode);
     this.root.style.setProperty('--lc', local.color || '#3fb64a');
+    if (this.mineCol !== (local.color || '#3fb64a')) { this.mineCol = local.color || '#3fb64a'; blit(this.mine, art.chevron(this.mineCol)); }
     setText(this.head, 'P' + (local.slot + 1));
     show(this.head, multi);
   }
@@ -203,7 +205,7 @@ export class SlotCard {
       // compact card (touch / 2+ locals): 2 short lines that fit 144 HUD px in both languages; full card: 3 lines
       if (this.multiMode) setHTML(this.status, `<span class="b">${tr('card.noMonS1', 'No monster yet!')}</span><span class="l2">${this.sizeMode === 'xs' ? tr('card.noMon3', 'throw an orb') : tr('card.noMonS2', 'Weaken it, then throw')} ${glyphHTML('capture', pad)}</span>`);
       else setHTML(this.status, `<span class="b">${tr('card.noMon', 'No monster yet!')}</span><span>${tr('card.noMon2', 'Weaken a wild one, then')}</span><span>${tr('card.noMon3', 'throw an orb')} ${glyphHTML('capture', pad)}</span>`);
-      setCls(this.mon, 'fainted', false); show(this.evotag, false); setCls(this.mon, 'evready', false);
+      setCls(this.mon, 'fainted', false); show(this.evotag, false); setCls(this.mon, 'evready', false); setCls(this.mon, 'tagon', false);
       for (const b of [this.bA1, this.bA2]) { setIcon(b, ''); setAb(b, now, 0, 1, { locked: true }); }
       setCls(this.bA2.el, 'lock', false); setCls(this.bA1.el, 'lock', false); setCls(this.bA1.el, 'off', true); setCls(this.bA2.el, 'off', true);
     } else {
@@ -236,7 +238,7 @@ export class SlotCard {
       if (rec.fainted) setHTML(this.status, `<span class="b">${tr('card.faintedT', 'Fainted! {n}s', { n: Math.max(0, Math.ceil(rec.faintUntil - now)) })}</span>${benchRec && !benchRec.fainted ? '<span class="sw2">' + tr('card.swap', 'Swap') + ' ' + glyphHTML('swap', pad) + '</span>' : ''}`);
       else if (!u.alive) setHTML(this.status, '<span>' + tr('card.resting', 'Resting in its orb') + '</span>');
       const ready = !rec.evolving && !rec.fainted && evolveReadyRec(rec);
-      show(this.evotag, ready || !!rec.evolving); setCls(this.mon, 'evready', ready);
+      show(this.evotag, ready || !!rec.evolving); setCls(this.mon, 'evready', ready); setCls(this.mon, 'tagon', ready || !!rec.evolving);
       if (rec.evolving) setHTML(this.evotag, tr('card.evolving', 'Evolving…'));
       else if (ready) setHTML(this.evotag, tr('card.evolve', 'EVOLVE') + ' ' + this.evoGlyph);
       if (ready && !this.wasReady) this.hud.toast(tr('toast.canEvolve', '{name} can evolve! Press ', { name: f.name }), 'ask', glyphHTML('evolve', pad));
@@ -268,6 +270,7 @@ export class SlotCard {
       setText(this.regen, benchRec.fainted ? tr('card.faintedShort', 'Fainted {n}s', { n: Math.max(0, Math.ceil(benchRec.faintUntil - now)) }) : benchRec.evolving ? tr('card.evolving', 'Evolving…') : benchRec.hpFrac < 0.995 ? tr('card.regen', '♥ +3%/s') : tr('card.ready', 'Ready!'));
       setAb(this.bSwap, now, T.cdEnd.swap, (S[1] && S[1].cdTotal) || TRAINER.swapCooldown, { off: benchRec.fainted || !u.alive || !!T.swap });
     }
+    if (this.multiMode) show(this.bSwap.el, !!benchRec);   // nothing to swap to: no swap button on the compact card / fallback cluster
     setCls(this.bench, 'swcd', !!this.bSwap.cool);
     // ---- state for the input layer's touch cluster (hud.abilityState)
     const st = this.state;
@@ -277,6 +280,17 @@ export class SlotCard {
     st.evolve.evolving = !!(rec && rec.evolving);
     st.bench = benchRec ? { form: benchRec.form, level: benchRec.level, hpFrac: benchRec.fainted ? 0 : benchRec.hpFrac, fainted: !!benchRec.fainted } : null;
     st.hasMon = hasMon; st.alive = !!u.alive;
+  }
+  /** refused command: a short shake of the button it concerns (locked move, nothing to swap to) or of the card */
+  /** the card button a refusal is about (locked move, nothing to swap to), when it is on screen */
+  denyButton(code) {
+    const b = code === 'locked' ? (this.bA2.el.classList.contains('lock') ? this.bA2 : this.bA1)
+      : code === 'no_bench' || code === 'fainted' || code === 'evolving' ? this.bSwap : null;
+    return b && !b.el.hidden && b.el.offsetParent && b.el.getBoundingClientRect().width > 0 ? b.el : null;
+  }
+  denyShake(code) {
+    const el = this.denyButton(code) || this.mon;
+    setCls(el, 'shake', false); void el.offsetWidth; setCls(el, 'shake', true);
   }
   dispose() { for (const b of this.fbButtons()) if (b.el.parentNode === this.hud.tpad) b.el.remove(); this.root.remove(); }
 }

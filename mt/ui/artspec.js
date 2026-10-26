@@ -13,8 +13,8 @@ export const TITLE_CAST = [
 /** title hero bake: flat tone ramps + a clean 1-art-px outline (pixelclean.js crispSprite) */
 export const TITLE_CRISP = { crisp: true, k: 9, minCluster: 4 };
 export const TITLE_FRAMES = 8;
-/** every raster scale the title layout can pick (L.S in [1, 2.5], 0.25 steps; silhouettes one SIL_STEP smaller) */
-export const TITLE_SCALES = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5];
+/** every raster scale the title layout can pick (L.S in [1, 2.5], 0.25 steps; silhouettes one SIL_STEP smaller); 3 / 3.5: the bigger "choose your partner" stage (menu.js) */
+export const TITLE_SCALES = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3, 3.5];
 export const SIL_STEP = 0.5;
 
 /** lobby line-up: trainers of every look × team, crisp bake (same 1-px outline as the title hero), no rim light */

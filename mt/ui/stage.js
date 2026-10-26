@@ -212,7 +212,8 @@ export class HeroStage {
    * @param {HTMLCanvasElement} canvas
    * @param {{cast:Member[], dais?:object, motes?:number, seed?:number, ring?:string}} o
    * Member = { id, x, y, d?=0 (dais index), flip?, fx?: 'fire'|'water'|'grass', phase?, n?, fps?, view?, rim?,
-   *            dim?: 0..1 (darken: bots), mark?: '#rrggbb' (pixel ring at the feet: a local player), shadow? }
+   *            dim?: 0..1 (darken: bots), mark?: '#rrggbb' (pixel ring at the feet: a local player), shadow?,
+   *            sc?: raster scale of this member (default: the stage scale; the lobby's starters stand smaller) }
    *   x/y: feet position relative to its dais centre, in dais x-radii / y-radii; members are drawn in list order.
    */
   constructor(canvas, o) {
@@ -240,10 +241,10 @@ export class HeroStage {
   setCast(cast, force) {
     this.cast = cast;
     if (!this.scale) return;
-    const k = cast.map((m) => m.id + (m.view || '')).join(',');
+    const k = cast.map((m) => m.id + (m.view || '') + (m.sc ? '@' + m.sc : '')).join(',');
     if (!force && k === this.castKey) { this.entries.forEach((x, i) => { x.m = cast[i]; }); return; }
     this.castKey = k;
-    this.entries = cast.map((m) => ({ m, e: heroFrames(m.id, this.scale, m.n || 8, m.fps || 8, m.rim, m.view, m.clean) }));
+    this.entries = cast.map((m) => ({ m, e: heroFrames(m.id, m.sc || this.scale, m.n || 8, m.fps || 8, m.rim, m.view, m.clean) }));
   }
   get ready() { return this.entries.length > 0 && this.entries.every((x) => x.e.frames[0]); }
   get complete() { return this.entries.length > 0 && this.entries.every((x) => x.e.got >= x.e.n); }

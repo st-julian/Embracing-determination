@@ -49,6 +49,33 @@ export class GamepadInput {
     sub('reticle', () => (this.reticles = new Reticles(ctx)));
     sub('touch', () => (this.touch = new TouchControls(ctx, locals, this)));
     sub('hints', () => (this.hints = new FirstMatchHints(ctx, locals, this)));
+    // [load/hitch] the legacy loop calls this BEFORE the frame's sim ticks ([MT-HOOK] inputEarly in index-*.js qk):
+    // stick / joystick movement reaches the sim one frame earlier than from update() (which runs after the ticks)
+    this.app.mtInputEarly = (dt) => this.early(dt);
+  }
+
+  /** [load/hitch] movement before the sim ticks: pad left sticks (handle() then reuses the result) + touch joystick. */
+  early(dt) {
+    dt = Math.min(0.1, dt || 0);
+    try {
+      const app = this.app, w = app.world;
+      if (this.enabled && app.state === 'game' && w && !app.paused && !this.modal()) {
+        const rig = this.ctx.pipeline && this.ctx.pipeline.cameraRig, yaw = (rig && rig.yaw) || 0;
+        for (const pad of readPads()) {
+          const local = this.locals.byDevice('pad:' + pad.index); if (!local) continue;
+          const me = w.units.get(local.unitId); if (!me || !me.alive) continue;
+          const s = this.st(pad.index);
+          s.early = this.move(pad, s, me, dt, Math.cos(yaw), Math.sin(yaw));
+        }
+      }
+    } catch (e) { this.earlyErr(e); }
+    try { if (this.touch && this.touch.early) this.touch.early(dt); } catch (e) { this.earlyErr(e); }
+  }
+  earlyErr(e) {
+    const app = this.app; if (!app || !app.errors) return;
+    const g = app.errors['mt-ui:inputEarly'] || (app.errors['mt-ui:inputEarly'] = { count: 0, last: '' });
+    if (++g.count <= 3) console.error('[mt-input:early]', e);
+    g.last = String(e && e.stack || e).slice(0, 400);
   }
 
   updateSubs(f) {
@@ -77,6 +104,7 @@ export class GamepadInput {
       if (s.any()) this.locals.setMode('pad', glyphFamily(pad.kind)); // a pad press anywhere -> pad UI (touch controls hide)
       this.handle(f, pad, s, dt);
     }
+    for (const s of this.state.values()) s.early = null; // [load/hitch] an early() move is used by this frame's handle() only
     if (f.state === 'game' && f.world && this.pads.length) this.rumbleEvents(f);
     this.updateSubs(f);
   }
@@ -123,23 +151,10 @@ export class GamepadInput {
     if (sb !== s.scoreHeld) { s.scoreHeld = sb; app.fire('ui', { panel: sb ? 'scoreboard' : 'none' }); }
     if (app.paused || !me.alive) { s.dir = [0, 0]; aim.active = false; aim.hold = null; return; }
 
-    // --- movement (camera-relative, analog, leashed)
+    // --- movement (camera-relative, analog, leashed) — normally already sent by early(), before the sim ticks
     const rig = this.ctx.pipeline && this.ctx.pipeline.cameraRig, yaw = (rig && rig.yaw) || 0;
     const cy = Math.cos(yaw), sy = Math.sin(yaw);
-    const [mx, my, mk] = shapeStick(pad.raw[0], pad.raw[1], STICK.moveExp);
-    let dx = 0, dy = 0;
-    if (mk > 0) {
-      const sp = (0.38 + 0.62 * mk) / mk;
-      dx = (mx * cy + my * sy) * sp; dy = (-mx * sy + my * cy) * sp;
-      const cam = app.mtCamera; if (cam && cam.filterDir) [dx, dy] = cam.filterDir(me, dx, dy);
-    }
-    s.dirT -= dt;
-    const moving = dx !== 0 || dy !== 0;
-    const ordDir = me.order && me.order.type === 'dir';
-    if (Math.abs(dx - s.dir[0]) > 0.04 || Math.abs(dy - s.dir[1]) > 0.04 || (moving && !ordDir && s.dirT <= 0)) {
-      if (moving || ordDir) send({ type: 'dir', dx, dy });
-      s.dir = [dx, dy]; s.dirT = 0.12;
-    }
+    const { dx, dy, moving } = s.early || this.move(pad, s, me, dt, cy, sy);
 
     // --- aim (right stick) + flick target cycling
     const [ax, ay, ak] = shapeStick(pad.raw[2], pad.raw[3], STICK.aimExp);
@@ -207,6 +222,25 @@ export class GamepadInput {
     if (s.down(BTN.UP)) send({ type: 'evolve' });
     if (s.down(BTN.DOWN)) send({ type: 'regroup' });
     if (s.down(BTN.LEFT)) send({ type: 'recall' });
+  }
+
+  /** Left stick -> 'dir' order (camera-relative, analog, leashed). Returns the direction for aim / facing. */
+  move(pad, s, me, dt, cy, sy) {
+    const [mx, my, mk] = shapeStick(pad.raw[0], pad.raw[1], STICK.moveExp);
+    let dx = 0, dy = 0;
+    if (mk > 0) {
+      const sp = (0.38 + 0.62 * mk) / mk;
+      dx = (mx * cy + my * sy) * sp; dy = (-mx * sy + my * cy) * sp;
+      const cam = this.app.mtCamera; if (cam && cam.filterDir) [dx, dy] = cam.filterDir(me, dx, dy);
+    }
+    s.dirT -= dt;
+    const moving = dx !== 0 || dy !== 0;
+    const ordDir = me.order && me.order.type === 'dir';
+    if (Math.abs(dx - s.dir[0]) > 0.04 || Math.abs(dy - s.dir[1]) > 0.04 || (moving && !ordDir && s.dirT <= 0)) {
+      if (moving || ordDir) this.app.world.command(me.id, { type: 'dir', dx, dy });
+      s.dir = [dx, dy]; s.dirT = 0.12;
+    }
+    return { dx, dy, moving };
   }
 
   /** Lock the next target. directional: best match to `dir` excluding the current lock; else nearest / next by distance. */

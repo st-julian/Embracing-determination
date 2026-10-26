@@ -15,14 +15,18 @@
 // Test hooks: `testInfo()`, `session`, `?netbot` (scripted local human: in-tick commands for the local unit are input).
 
 import { acquireRoom, RoomTransport, makeCode, roomName, CODE_RE, normCode } from './transport.js';
-import { NetSession, SessionLink, TICK_MS } from './lockstep.js';
-import { parseGo, netRoster, balanceTeams, cleanName, makeMid, MAX_HUMANS } from './match.js';
+import { NetSession, SessionLink, TICK_MS, LINK_GAP } from './lockstep.js';
+import { parseGo, netRoster, balanceTeams, cleanName, makeMid, cleanOptions, cleanStarter, MAX_HUMANS } from './match.js';
+import { buildId, NET_PROTO } from './build.js';
+import { LocalPredictor } from './predict.js';
+import { flatten, diff as auditDiff } from './audit.js';
 import { install as detOn, uninstall as detOff } from './detmath.js';
 import { t } from '../i18n/index.js';
 import { SPEC_IDS, TEAM_SIZE } from '../data/balance.js';
 
-export const PROTO = 1;
+export const PROTO = NET_PROTO;   // presence protocol (build.js); peers on another one are "a different version"
 const NAME_KEY = 'sv.net.name';
+const JOIN_RETRY_MS = 45000, RETRY_CODES = ['not_found', 'webrtc_failed', 'timeout', 'signal_failed'];   // WebRTC guest re-tries
 const JOIN_TIMEOUT_MS = 9000;   // no host in a joined room after this long (of this page's running time) = no such game
 
 function loadName() { try { const v = localStorage.getItem(NAME_KEY); if (v) return cleanName(v); } catch { /* private mode */ } return ''; }
@@ -56,12 +60,14 @@ export class NetController {
     app.mtNet = this;
     this.status = 'init'; this.kind = null; this.reason = ''; this.tr = null; this.readyP = null;
     this.room = null; this.code = null; this.isHost = false; this.joinedAt = 0; this.error = null; this.errorAt = 0;
-    this.me = { nm: loadName(), tm: 0, sp: 'attack', lk: 'attack', rd: 0 };
+    this.me = { nm: loadName(), tm: 0, sp: 'attack', lk: 'attack', rd: 0, sr: null };   // sr = chosen starter (null: default)
+    this.matchOptions = null;   // host: match options for the next START (setMatchOptions)
+    this.bv = null;   // build id (build.js): same game code + data as the others? computed before the first create / join
     this.device = { device: 'kbm', inputType: 'kbm', padId: '', padIndex: -1, wasd: false };
     this.ord = []; this.lastGoMid = null; this.go = null; this.cfg = null;
     this.session = null; this.link = null; this.lastReport = null; this.checks = []; this.toasts = [];
     this.lobbyPub = {}; this.lobbyPubAt = -1e9; this.roomPub = {}; this.roomPubAt = -1e9;
-    this.modal = null; this.ui = null; this.pumpH = null; this.lastPump = 0; this.pumpAcc = 0; this.leftSeen = new Set();
+    this.modal = null; this.ui = null; this.pumpH = null; this.lastPump = 0; this.pumpAcc = 0; this.leftSeen = new Set(); this.versionWarned = new Set();
     this.roomAlive = 0; this.roomFrameAt = 0; this.lastJoinErr = null;
     // invite link <page>?join=<code>: straight into that game room once the title is up
     const j = normCode(app.params && app.params.get ? app.params.get('join') : ''); this.autoJoin = CODE_RE.test(j) ? j : null;
@@ -83,8 +89,46 @@ export class NetController {
   // ------------------------------------------------------------------------------------------------ loop hooks
   /** [MT-HOOK] netGate / netPace: true while this page plays an online match in the current world */
   get active() { const s = this.session, a = this.app; return !!(s && a.world === s.world && (a.state === 'game' || a.state === 'end')); }
-  step(w) { return this.session ? this.session.step(w) : (w.tick(), true); }
-  pace(acc, dt) { return this.session ? this.session.pace(acc, dt, this.app.timeScale || 1) : acc; }
+  step(w) {
+    this.visualEnd();   // never tick with the render-only prediction applied
+    if (!this.session) { w.tick(); return true; }
+    if (this.audit) this.auditCheck('step');
+    return this.link ? this.link.step(w) : this.session.step(w);
+  }
+  pace(acc, dt) {
+    this.visualEnd();
+    if (!this.session) return acc;
+    if (this.audit) this.auditCheck('pace');
+    if (this.link) this.link.pull();   // the freshest inputs before this frame's ticks
+    // the main loop caps a frame at 0.1 s: on a device rendering slower than 10 fps the shared sim would crawl in slow
+    // motion for EVERYONE (the gate holds the others to my pace) — feed the capped time back in (up to 0.5 s / frame)
+    const now = nowMs(), real = this.paceAt ? Math.min(0.5, (now - this.paceAt) / 1000) : dt, ts = this.app.timeScale || 1;
+    this.paceAt = now;
+    if (real > dt + 0.002) acc += (real - dt) * ts;
+    return this.session.pace(acc, dt, ts, Math.max(0.1, real * 1.1 + 0.034));
+  }
+  /** [MT-HOOK] netVisual: show my trainer where my already-issued commands take it (render-only, predict.js) */
+  visualBegin(f) {
+    const s = this.session, w = this.app.world;
+    if (this.audit && s && s.world === w) this.auditSnap = { T: w.tickNo, m: flatten(w), at: 'frame' };
+    if (!s || !this.pred || !this.predictOn || s.world !== w || this.app.state !== 'game' || s.dead || s.desync) return;
+    try { this.pred.begin(w.units.get(s.slotUnit[s.me]), w.tickNo, s.D, f && f.dt || 1 / 60, f && f.alpha != null ? f.alpha : 1); } catch (e) { this.pred.end(w); console.warn('[net] predict', e); }
+  }
+  visualEnd() { if (this.pred) this.pred.end(this.app.world); }
+  /** ?netaudit: report sim state that changed since the last snapshot (after the previous frame's ticks) — must be none */
+  auditCheck(where) {
+    const a = this.auditSnap, w = this.app.world, A = this.audit;
+    if (!a) return;
+    this.auditSnap = null;
+    if (!this.session || this.session.world !== w || a.T !== w.tickNo) return;
+    const d = auditDiff(a.m, flatten(w));
+    A.frames++;
+    if (!d.n) return;
+    A.n += d.n;
+    for (const [k] of d.out) { const f = k.replace(/^u\d+/, 'u*').replace(/\[\d+\]/g, '[]').replace(/<[^>]*>/g, '<>'); A.fields[f] = (A.fields[f] || 0) + 1; }
+    if (A.hits.length < 40) A.hits.push({ T: w.tickNo, at: a.at + '->' + where, n: d.n, out: d.out.slice(0, 12) });
+    if (A.hits.length <= 5) console.warn('[net] audit: ' + d.n + ' sim value(s) changed outside the tick before tick ' + (w.tickNo + 1) + ' (' + a.at + '->' + where + '): ' + JSON.stringify(d.out.slice(0, 6)));
+  }
 
   // ------------------------------------------------------------------------------------------------ lobby-facing API
   available() { return this.status === 'ready' && !!(this.tr && this.tr.usable); }
@@ -100,8 +144,9 @@ export class NetController {
     for (const p of this.tr.peers()) {
       if (p.isMe && p.sameTab) continue;
       const h = p.presence && p.presence.host;
-      if (!h || typeof h !== 'object' || typeof h.code !== 'string' || !CODE_RE.test(h.code) || h.v !== PROTO) continue;
-      out.push({ code: h.code, name: cleanName(h.name, '?'), players: h.players | 0, max: h.max | 0 || MAX_HUMANS, open: !!h.open, guest: !!p.guest, peer: p.peer });
+      if (!h || typeof h !== 'object' || typeof h.code !== 'string' || !CODE_RE.test(h.code)) continue;
+      const same = h.v === PROTO && (!h.bv || !this.bv || h.bv === this.bv);   // another build: listed, not joinable
+      out.push({ code: h.code, name: cleanName(h.name, '?'), players: h.players | 0, max: h.max | 0 || MAX_HUMANS, open: !!h.open && same, version: same, guest: !!p.guest, peer: p.peer });
     }
     return out.sort((a, b) => (b.open - a.open) || a.code.localeCompare(b.code));
   }
@@ -122,10 +167,23 @@ export class NetController {
   }
   async enterRoom(code, host) {
     if (!this.available()) { this.setError('net.unavailable'); return false; }
+    if (!this.bv) this.bv = await buildId();   // the sim modules are loaded by now (title backdrop world)
     if (this.room) await this.leaveRoom();
-    this.joining = code; this.error = null; this.lastJoinErr = null;
+    this.joining = code; this.error = null; this.lastJoinErr = null; this.joinTries = 0;
+    // WebRTC guest: keep trying for a while — the host may be in another app right now (sending you the link on an
+    // iPad suspends its page), or the first ICE attempt raced; the panel keeps saying "joining CODE…" meanwhile
+    const until = nowMs() + (host || this.kind !== 'peer' ? 0 : JOIN_RETRY_MS);
     try {
-      const r = await this.tr.join(roomName(code), { create: host });
+      let r = null;
+      for (;;) {
+        try { r = await this.tr.join(roomName(code), { create: host }); break; } catch (e) {
+          const c = e && e.code;
+          if (this.joining !== code || !RETRY_CODES.includes(c) || nowMs() > until) throw e;
+          this.joinTries++;
+          await new Promise((res) => setTimeout(res, 2000));
+          if (this.joining !== code) throw e;
+        }
+      }
       if (this.joining !== code) { r.leave(); return false; }
       this.room = r; this.code = code; this.isHost = host; this.joinedAt = nowMs(); this.ord = []; this.lastGoMid = null; this.hostSeen = 0; this.go = null;
       this.roomAlive = 0; this.roomFrameAt = 0;
@@ -139,7 +197,10 @@ export class NetController {
       return false;
     } finally { this.joining = null; }
   }
+  /** stop a join that is still trying (the player backed out of "joining CODE…") */
+  cancelJoin() { this.joining = null; }
   async leaveRoom() {
+    this.joining = null;
     const r = this.room;
     this.endSession('leave');
     this.room = null; this.code = null; this.isHost = false; this.go = null; this.ord = [];
@@ -154,11 +215,25 @@ export class NetController {
     for (const p of this.tr.peers(this.room)) {
       const pr = p.isMe && p.sameTab ? this.myLobbyFields() : p.presence || {};
       if (!(p.isMe && p.sameTab) && pr.v == null) continue;   // not (yet) a game page
+      const vOk = pr.v === PROTO && (!pr.bv || !this.bv || pr.bv === this.bv);
       list.push({ peer: p.peer, me: p.peer === me || (p.isMe && p.sameTab), nm: cleanName(pr.nm, t('net.defaultName')), tm: pr.tm === 1 ? 1 : 0,
-        sp: SPEC_IDS.includes(pr.sp) ? pr.sp : 'attack', lk: SPEC_IDS.includes(pr.lk) ? pr.lk : 'attack', rd: !!pr.rd, host: pr.host === 1, st: pr.st || 'lb', ok: pr.v === PROTO, guest: !!p.guest });
+        sp: SPEC_IDS.includes(pr.sp) ? pr.sp : 'attack', lk: SPEC_IDS.includes(pr.lk) ? pr.lk : 'attack', rd: !!pr.rd, host: pr.host === 1, st: pr.st || 'lb',
+        ok: vOk, version: vOk, bv: typeof pr.bv === 'string' ? pr.bv : null, starter: cleanStarter(pr.sr), opt: pr.host === 1 ? cleanOptions(pr.opt) : null, guest: !!p.guest });
     }
     const ord = this.seatOrder(list);
     return list.sort((a, b) => ord(a) - ord(b));
+  }
+  /** room members running another build (v / bv differ) — they cannot play together */
+  otherVersions() {
+    if (!this.room || !this.tr) return [];
+    const out = [];
+    for (const p of this.tr.peers(this.room)) {
+      if (p.isMe && p.sameTab) continue;
+      const pr = p.presence || {};
+      if (pr.v == null && pr.nm == null) continue;   // nothing published yet
+      if (pr.v !== PROTO || (pr.bv && this.bv && pr.bv !== this.bv)) out.push({ peer: p.peer, nm: cleanName(pr.nm, t('net.defaultName')), host: pr.host === 1 });
+    }
+    return out;
   }
   seatOrder(list) {
     const host = list.find((m) => m.host && !m.me), hp = host ? this.peerPresence(host.peer) : null;
@@ -170,19 +245,32 @@ export class NetController {
   /** change my lobby choices: {tm, sp, lk, rd} — team changes refuse a full team */
   setMine(f) {
     if (f.tm != null && f.tm !== this.me.tm && this.teamCount(f.tm) >= TEAM_SIZE) return false;
+    f = { ...f };
+    if ('starter' in f) { f.sr = cleanStarter(f.starter); delete f.starter; }   // the starter monster this player picked
     Object.assign(this.me, f);
     return true;
+  }
+  /** host: the options of the next match (mt/data/options.js shape: mode, difficulty, ...); false if not a flat id/number object */
+  setMatchOptions(o) { const c = o == null ? null : cleanOptions(o); if (o != null && !c) return false; this.matchOptions = c; return true; }
+  /** the options in effect: the running match's, else the host's (as published), else mine */
+  matchOptionsNow() {
+    if (this.cfg && this.session) return this.cfg.options;
+    if (this.isHost) return this.matchOptions;
+    const h = this.members().find((m) => m.host && !m.me); return h ? h.opt : null;
   }
   canStart() {
     if (!this.isHost || this.session) return false;
     const m = this.members().filter((x) => x.ok);
-    return m.length >= 1 && m.length <= MAX_HUMANS && m.every((x) => x.me || (x.rd && x.st === 'lb'));
+    // build ids known everywhere (computed at boot): never start a match two different builds would desync in
+    return !!this.bv && m.length >= 1 && m.length <= MAX_HUMANS && m.every((x) => x.me || (x.rd && x.st === 'lb' && x.bv === this.bv));
   }
   startMatch() {
     if (!this.canStart()) return false;
     const members = balanceTeams(this.members().filter((x) => x.ok).slice(0, MAX_HUMANS));
     const seed = (Math.floor(Math.random() * 1e6) + 1) % 1000000;
-    const go = { mid: makeMid(), seed, pl: members.map((m) => [m.peer, m.tm, m.sp, m.lk, m.me ? this.displayName() : m.nm]) };
+    const go = { mid: makeMid(), seed, pl: members.map((m) => [m.peer, m.tm, m.sp, m.lk, m.me ? this.displayName() : m.nm, m.me ? this.me.sr : m.starter]) };
+    if (this.bv) go.bv = this.bv;
+    if (this.matchOptions) go.o = this.matchOptions;
     this.go = go;
     this.pushRoom(true);
     return true;
@@ -191,7 +279,9 @@ export class NetController {
   // ------------------------------------------------------------------------------------------------ presence out
   myLobbyFields() {
     const f = { v: PROTO, nm: this.displayName(), tm: this.me.tm, sp: this.me.sp, lk: this.me.lk, rd: this.me.rd ? 1 : 0, st: this.matchState() };
-    if (this.isHost) { f.host = 1; f.code = this.code; f.ord = this.ord.slice(0, MAX_HUMANS + 2); if (this.go) f.go = this.go; }
+    if (this.bv) f.bv = this.bv;
+    if (this.me.sr) f.sr = this.me.sr;
+    if (this.isHost) { f.host = 1; f.code = this.code; f.ord = this.ord.slice(0, MAX_HUMANS + 2); if (this.go) f.go = this.go; if (this.matchOptions) f.opt = this.matchOptions; }
     return f;
   }
   matchState() { const a = this.app.state; if (!this.session) return 'lb'; return a === 'loading' ? 'ld' : a === 'end' ? 'end' : a === 'game' ? 'gm' : 'lb'; }
@@ -204,6 +294,7 @@ export class NetController {
     if (this.room && this.isHost) {
       const n = this.members().filter((m) => m.ok).length;
       host = { code: this.code, name: this.displayName(), players: n, max: MAX_HUMANS, open: !this.session && n < MAX_HUMANS, v: PROTO };
+      if (this.bv) host.bv = this.bv;
     }
     const j = JSON.stringify(host);
     if (j === this.lobbyPub.host) return;
@@ -252,13 +343,15 @@ export class NetController {
     if (!me) return;
     const others = members.filter((m) => !m.me);
     if (this.isHost) {
-      for (const m of members) if (!this.ord.includes(m.peer) && this.ord.length < MAX_HUMANS) this.ord.push(m.peer);   // seats: join order, 6 max
+      for (const o of this.otherVersions()) if (!this.versionWarned.has(o.peer)) { this.versionWarned.add(o.peer); this.toast(t('net.versionOther', { name: o.nm })); }
+      for (const m of members) if (m.ok && !this.ord.includes(m.peer) && this.ord.length < MAX_HUMANS) this.ord.push(m.peer);   // seats: join order, 6 max
       this.ord = this.ord.filter((p) => members.some((m) => m.peer === p));
       // a second page claiming host (both created the same code): the smaller peer label keeps it
       const rival = others.find((m) => m.host);
       if (rival && rival.peer < me) this.isHost = false;
     } else {
       const host = others.find((m) => m.host);
+      if (host && !host.version && this.bv) { this.setError('net.version'); this.leaveRoom(); return; }   // another build: refuse, never desync
       if (host) { const hp = this.peerPresence(host.peer); if (hp && Array.isArray(hp.ord)) this.ord = hp.ord.filter((x) => typeof x === 'string').slice(0, 12); this.hostSeen = nowMs(); }
       else if (this.roomAlive > JOIN_TIMEOUT_MS && !this.hostSeen) { this.setError('net.notFound'); this.leaveRoom(); return; }
       else if (this.hostSeen && !this.tr.migrates) { this.setError('net.hostLeft'); this.leaveRoom(); return; }   // WebRTC star: nobody left to talk to
@@ -302,24 +395,32 @@ export class NetController {
     const app = this.app, me = this.selfPeer();
     const mySlot = cfg.pl.findIndex((p) => p.peer === me);
     if (mySlot < 0) return false;
+    if (cfg.bv && this.bv && cfg.bv !== this.bv) { this.setError('net.version'); this.leaveRoom(); return false; }   // would desync
     this.endSession('restart');
     this.cfg = cfg;
     const players = netRoster(cfg);
     app.mtNetLocal = { slot: mySlot, ...this.device };
+    const spec = { seed: cfg.seed, players };
+    if (cfg.options) spec.options = { ...cfg.options };   // the host's match options: the same world everywhere
     detOn();
-    try { app.newMatch({ seed: cfg.seed, players }); } finally { detOff(); }
+    try { app.newMatch(spec); } finally { detOff(); }
     const w = app.world;
     const seats = cfg.pl.map((p, k) => ({ peer: p.peer, name: p.name, unitId: (w.players.find((q) => q.netSlot === k) || {}).unitId }));
     const s = this.session = new NetSession({
       world: w, mid: cfg.mid, seats, mySlot, scriptLocal: !!(app.params && app.params.has && app.params.has('netbot')),
+      trace: !!(app.params && app.params.has && app.params.has('nettrace')),
       log: (m) => console.info('[net] ' + m),
       onTick: (wd, T) => { if (T % 900 === 0) { const qa = wd.mt && wd.mt.debug && wd.mt.debug.qa; if (qa) { this.checks.push([T, qa.stateHash()]); if (this.checks.length > 400) this.checks.shift(); } } },
     });
-    s.onLocal = (cmd) => this.localFeedback(cmd);
+    this.pred = new LocalPredictor(); this.pred.world = w;
+    this.audit = app.params && app.params.has && app.params.has('netaudit') ? { frames: 0, n: 0, hits: [], fields: {} } : null;   // desync forensics (audit.js)
+    this.auditSnap = this.audit ? { T: w.tickNo, m: flatten(w), at: 'newMatch' } : null;
+    this.predictOn = !(app.params && app.params.get && app.params.get('netpredict') === '0');   // ?netpredict=0: off (A/B)
+    s.onLocal = (cmd, T) => { this.localFeedback(cmd); this.pred.note(cmd, T); };
     if (w.mt) w.mt.net = s;
     this.checks = [];
     this.leftSeen = new Set(); this.modal = null; this.closeModal();
-    this.link = new SessionLink(s, this.room, { extra: () => this.myLobbyFields() });
+    this.link = new SessionLink(s, this.room, { extra: () => this.myLobbyFields(), minGapMs: LINK_GAP[this.kind] || 33 });
     this.roomPub = {};
     // the host keeps `go` in its presence for the whole match (latest-wins: a slow peer must still see it); every
     // peer remembers the mid it started (lastGoMid), and the host clears it when the room returns to the lobby
@@ -331,6 +432,7 @@ export class NetController {
   endSession(why) {
     const s = this.session;
     if (!s) return;
+    this.visualEnd(); this.pred = null;
     this.lastReport = { ...s.report(), why, checks: this.checks.slice() };
     s.ended = true;
     // the match fields of my game-room presence (m, u, c, a, ...) are removed by the next pushRoom()
@@ -360,7 +462,12 @@ export class NetController {
   // ------------------------------------------------------------------------------------------------ hidden tab
   visibility() {
     if (typeof document === 'undefined') return;
-    if (document.hidden && this.session) this.startPump(); else this.stopPump();
+    const hidden = document.hidden, s = this.session;
+    this.paceAt = 0;   // the first visible frame must not count the hidden time (the pump ran the sim meanwhile)
+    // tell the others at once (iPad: the page may be frozen a moment later): they wait longer and say why
+    if (s) { s.away = hidden; if (this.link) this.link.push(true); if (this.room && typeof this.room.flushNow === 'function') try { this.room.flushNow(); } catch { /* best effort */ } }
+    if (hidden && s) this.startPump(); else this.stopPump();
+    if (!hidden && this.tr && this.tr.room && typeof this.tr.room.wake === 'function') { try { this.tr.room.wake(); } catch { /* best effort */ } }   // WebRTC: re-open signaling now
   }
   startPump() {
     if (this.pumpH) return;
@@ -373,11 +480,13 @@ export class NetController {
     if (typeof document !== 'undefined' && !document.hidden) { this.stopPump(); return; }
     const app = this.app, s = this.session, w = app.world;
     if (!s || !this.link) { this.stopPump(); return; }
+    this.visualEnd();
+    if (this.audit) this.auditCheck('pump');
     const now = nowMs(), dt = Math.min(2, (now - this.lastPump) / 1000); this.lastPump = now;
     if (this.active) {
       this.pumpAcc += dt * (app.timeScale || 1);
-      this.pumpAcc = s.pace(this.pumpAcc, dt, app.timeScale || 1) + 0;
-      for (let n = 0; this.pumpAcc >= 1 / 30 && n < 90; n++) { if (!s.step(w)) break; this.pumpAcc -= 1 / 30; }
+      this.pumpAcc = s.pace(this.pumpAcc, dt, app.timeScale || 1, 2.5);   // throttled timers: up to 2.5 s per call
+      for (let n = 0; this.pumpAcc >= 1 / 30 && n < 90; n++) { if (!this.link.step(w)) break; this.pumpAcc -= 1 / 30; }
       if (w.winner !== null && app.state === 'game') { app.state = 'end'; app.fire('state', 'end'); }
     }
     this.link.frame();
@@ -417,7 +526,9 @@ export class NetController {
     if (waitOn) {
       const names = wt.slots.map((k) => (s.seats[k] && s.seats[k].name) || 'P' + (k + 1)).join(', ');
       const loading = wt.slots.every((k) => !s.seen[k] || s.peerSt[k] === 'ld' || s.peerSt[k] === 'lb');
-      const txt = loading ? t('net.loadingWho', { who: names }) : t('net.waiting', { who: names });
+      const away = wt.away && wt.away.length === wt.slots.length;   // they switched app (iPad): say so, with the seconds left
+      const left = away ? Math.max(0, Math.ceil((20000 - (nowMs() - wt.since)) / 1000)) : 0;
+      const txt = loading ? t('net.loadingWho', { who: names }) : away ? t('net.away', { who: names, s: left }) : t('net.waiting', { who: names });
       if (U.waitT.textContent !== txt) U.waitT.textContent = txt;
     }
     U.wait.style.display = waitOn ? 'block' : 'none';
@@ -479,7 +590,7 @@ export class NetController {
   testInfo() {
     const s = this.session;
     return { status: this.status, kind: this.kind, code: this.code, host: this.isHost, peer: this.selfPeer(), members: this.members().map((m) => ({ peer: m.peer, nm: m.nm, tm: m.tm, rd: m.rd, host: m.host, st: m.st })),
-      session: s ? s.report() : null, last: this.lastReport, checks: this.checks.slice(), errors: this.tr ? this.tr.errors.slice(-5) : [], error: this.error, link: this.link ? { pubs: this.link.pubCount, fails: this.link.pubFails, err: this.link.lastError || null } : null };
+      session: s ? s.report() : null, last: this.lastReport, audit: this.audit || undefined, checks: this.checks.slice(), errors: this.tr ? this.tr.errors.slice(-5) : [], error: this.error, link: this.link ? { pubs: this.link.pubCount, fails: this.link.pubFails, err: this.link.lastError || null } : null };
   }
   dispose() { this.stopPump(); if (this.onKey) window.removeEventListener('keydown', this.onKey, true); if (this.ui) this.ui.root.remove(); }
 }

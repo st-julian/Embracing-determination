@@ -36,6 +36,7 @@ import {
 } from "./material-BPS_1X92.js";
 import { ChampionView as j } from "./view-DHHUoofK.js";
 import { i as ae, n as oe, s as M, t as N } from "./lut-Ci_c3wOk.js";
+import { champPrebuild as __mtChampPrebuild, legacyMeshes as __mtLegacyMeshes } from "../mt/render/loadtime.js"; // [MT-HOOK] legacyMeshes import (mt/render/loadtime.js)
 var P = 1.9,
   se = 3,
   ce = 0.22,
@@ -480,7 +481,7 @@ var _e = class {
       (this.camera = e.camera || null),
       (this.surface = new ue(this.scene, e.registry || null)),
       (this.portraitMaxSize = 1024));
-    for (let e of n)
+    for (let e of __mtChampPrebuild(n, `types`)) // [MT-HOOK] legacyMeshes: mt builds only the types its players use (the trainer's, for the loading-screen art); ?legacymeshes=1 = all
       try {
         A(e);
       } catch (t) {
@@ -488,13 +489,13 @@ var _e = class {
       }
     e.app.on(`match`, () => this.clear());
     try {
-      $(n, 256);
+      $(__mtChampPrebuild(n, `portraits`), 256); // [MT-HOOK] legacyMeshes (mt: only the players' portrait, not the 5 legacy champions')
     } catch (e) {
       console.error(`[champions] portrait prebake failed`, e);
     }
     {
       let e = globalThis.requestIdleCallback || ((e) => setTimeout(e, 30)),
-        t = n.slice(),
+        t = __mtChampPrebuild(n, `lod`).slice(), // [MT-HOOK] legacyMeshes (mt: no LOD builds, no in-world champion views exist)
         r = () => {
           let n = t.shift();
           if (n) {
@@ -508,7 +509,7 @@ var _e = class {
         };
       e(r, { timeout: 1500 });
     }
-    try {
+    if (__mtLegacyMeshes()) try { // [MT-HOOK] legacyMeshes (no champion warm-up mesh: no champion material is ever drawn by the main renderer)
       let e = A(n[0]),
         t = e.rig.createBones(),
         r = new a(t, e.rig.inverses),

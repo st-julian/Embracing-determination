@@ -34,7 +34,7 @@ export class Scoreboard {
   constructor(hud) {
     this.hud = hud; this.body = h('div'); this.time = h('span.tm2');
     this.ttl = h('span.ttl', { text: tr('sb.title', 'Scoreboard') });
-    this.sbx = h('span.sbx', { role: 'button', 'aria-label': tr('common.close', 'Close') }, '\u00d7', h('i.hit'));   // touch: close
+    this.sbx = h('span.sbx', { role: 'button', 'aria-label': tr('common.close', 'Close') }, '\u00d7', h('i.mt-tap'));   // touch: close
     this.panel = h('div.pn.sb', null, h('div.sbh', null, this.ttl, this.time, this.sbx), this.body);
     this.el = h('div.modal.clear', { hidden: true }, this.panel); this.t = 0;
     // touch: the scoreboard opens from the Scores button and closes on any tap

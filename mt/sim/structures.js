@@ -80,6 +80,7 @@ const CLASS = { aggro: 0, minion: 1, monster: 2, trainer: 3 };
 
 function classOf(mt, tower, u) {
   if (u.kind === KIND.MINION) return CLASS.minion;
+  if (u.mtTrainer && mt.rules && mt.rules.focusHuman(tower.team, u) < 0.5) return CLASS.trainer;   // Easy: a HUMAN trainer last
   if (hurtingAllyOf(mt, u, tower.team, tower.x, tower.y, tower.stats.attackRange + 1.5)) return CLASS.aggro;
   return u.mtMon ? CLASS.monster : CLASS.trainer;
 }
@@ -133,11 +134,15 @@ function minionNear(mt, team, x, y, r) {
 
 /** Backdoor protection for monsters (legacy hv() only covers champion attackers). */
 function petBackdoor(mt, src, tgt) {
-  if (!src || !tgt || !isPet(src) || !mt.L.isStructure(tgt) || tgt.team === src.team) return 1;
+  if (!src || !tgt || !mt.L.isStructure(tgt) || (src.team !== 0 && src.team !== 1) || tgt.team === src.team) return 1;
+  // QUICK mode overtime (rules.js): structures take more damage the longer the match runs
+  const OT = mt.rules && mt.rules.M.overtime, t = mt.world.time;
+  const ot = OT && t > OT.from ? Math.min(OT.cap, 1 + OT.perMin * (t - OT.from) / 60) + (OT.late && t > OT.late ? OT.latePerMin * (t - OT.late) / 60 : 0) : 1;
+  if (!isPet(src) || (mt.rules && mt.rules.M.backdoor === false)) return ot;
   const protectedKind = (tgt.kind === KIND.TOWER && tgt.tier >= 2) || tgt.kind === KIND.INHIBITOR || tgt.kind === KIND.NEXUS;
-  if (!protectedKind) return 1;
+  if (!protectedKind) return ot;
   const C = mt.L.TOWER_CFG;
-  return minionNear(mt, src.team, tgt.x, tgt.y, C.backdoorRadius) ? 1 : C.backdoorMult;
+  return (minionNear(mt, src.team, tgt.x, tgt.y, C.backdoorRadius) ? 1 : C.backdoorMult) * ot;
 }
 
 // ------------------------------------------------------------------------------------------------ gating
@@ -155,10 +160,11 @@ function applyGating(mt) {
     if (s.kind === KIND.TOWER) { A[s.lane + ':' + s.tier] = true; if (s.tier === 4) A.base++; }
     else if (s.kind === KIND.INHIBITOR) { A['inhib:' + s.lane] = true; A.inhibs++; }
   }
+  const lanes = mt.rules ? mt.rules.lanes : LANES;   // QUICK mode: mid only (top/bot structures were removed)
   for (const s of S) {
     if (s.team !== 0 && s.team !== 1) continue;
     const A = alive[s.team];
-    const allInhibs = LANES.every((l) => A['inhib:' + l]);
+    const allInhibs = lanes.every((l) => A['inhib:' + l]);
     let inv = false;
     if (s.kind === KIND.TOWER) inv = s.tier === 1 ? false : s.tier === 4 ? allInhibs : !!A[s.lane + ':' + (s.tier - 1)];
     else if (s.kind === KIND.INHIBITOR) inv = !!A[s.lane + ':3'];

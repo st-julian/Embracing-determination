@@ -43,10 +43,16 @@ html.lang-ja #mt-touch { font-family: 'Vale JP', system-ui, sans-serif; font-wei
   text-shadow: 0 2px 0 var(--ink), 0 0 3px var(--ink); }
 #mt-touch .tb.cool .cd, #mt-touch .tb.cool .num { display: grid; }
 #mt-touch .tb.cool .cd { display: block; }
-#mt-touch .tb.off { filter: grayscale(1) brightness(.85); opacity: .55; }
-#mt-touch .tb.lock { filter: grayscale(1) brightness(.8); opacity: .5; }
-#mt-touch .tb.lock:after { content: attr(data-lv); position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-size: calc(var(--s) * .26);
-  text-shadow: 0 2px 0 var(--ink); }
+/* unusable: dimmed to 40 %, no press animation; locked moves show a padlock + the level that unlocks them */
+#mt-touch .tb.off { filter: grayscale(1) brightness(.9); opacity: .4; }
+#mt-touch .tb.lock { background: radial-gradient(circle at 36% 28%, #c9c4b8 0, #a9a497 60%, #8f8a7e 100%); box-shadow: 0 0 0 3px rgba(27, 35, 80, .7), 0 3px 0 3px rgba(14, 18, 44, .3); opacity: .72; }
+#mt-touch .tb.lock canvas.ic { opacity: .25; filter: grayscale(1); }
+#mt-touch .tb .lk { position: absolute; left: 50%; top: 40%; width: 42%; height: 42%; transform: translate(-50%, -50%); display: none; pointer-events: none; }
+#mt-touch .tb .lk svg { width: 100%; height: 100%; }
+#mt-touch .tb.lock .lk { display: block; }
+#mt-touch .tb.lock:after { content: attr(data-lv); position: absolute; left: 50%; bottom: 10%; transform: translateX(-50%); color: #fffaf0; font-size: max(11px, calc(var(--s) * .2)); line-height: 1;
+  padding: 2px 5px 1px; border-radius: 6px; background: var(--ink); }
+#mt-touch .tb.off.down, #mt-touch .tb.lock.down { transform: none; }
 #mt-touch .tb.down { transform: scale(.9); filter: brightness(1.08); }
 #mt-touch .tb.flash { animation: mtTbFlash .45s ease-out; }
 @keyframes mtTbFlash { 0% { box-shadow: 0 0 0 3px var(--ink), 0 0 0 10px rgba(255, 210, 58, .9); } 100% { box-shadow: 0 0 0 3px var(--ink), 0 4px 0 3px rgba(14, 18, 44, .45); } }
@@ -84,6 +90,7 @@ html.lang-ja #mt-touch { font-family: 'Vale JP', system-ui, sans-serif; font-wei
 #mt-touch .chlab { position: absolute; left: 0; top: 0; transform: translate(-50%, -100%); display: none; pointer-events: none; white-space: nowrap;
   background: var(--cream); border: 2px solid var(--ink); border-radius: 8px; padding: 3px 7px 2px; font-size: 13px; box-shadow: 0 3px 0 rgba(14, 18, 44, .4); }
 #mt-touch .chlab b { color: var(--cc, #c98a00); }
+#mt-touch .lkchip { font-size: 12.5px; z-index: 2; }
 
 /* ------------------------------------------------------------------ rotate prompt (portrait on a touch device) */
 #mt-rotate { position: fixed; inset: 0; z-index: 50; display: none; place-items: center; background: radial-gradient(circle at 50% 40%, #2c3a7a, #0e1230);

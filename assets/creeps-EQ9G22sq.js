@@ -46,6 +46,7 @@ import {
 import { a as R, d as oe, o as se } from "./height-CVtQdZ3e.js";
 import { n as ce } from "./BufferGeometryUtils-ZZwUU_DG.js";
 import { n as le, t as ue } from "./rim-zRZuAScU.js";
+import { creepsLite as __mtCreepsLite, creepLite as __mtCreepLite } from "../mt/render/loadtime.js"; // [MT-HOOK] legacyMeshes import (mt/render/loadtime.js)
 function de(e, t, n) {
   return +(oe(e, t) > 0);
 }
@@ -12505,7 +12506,7 @@ var Ur = class {
         (this.workers = []),
         (this.idle = []),
         (this.stats = { worker: 0, sync: 0, ms: 0 }),
-        typeof Worker < `u` && typeof window < `u`)
+        typeof Worker < `u` && typeof window < `u` && !__mtCreepsLite()) // [MT-HOOK] legacyMeshes (mt: no creep build workers)
       ) {
         let e = Math.max(
           1,
@@ -13078,7 +13079,7 @@ var hi = class {
       (this.typeList = []),
       (this.defs = { ...Bn, ...Br }),
       (this.failed = new Set()),
-      (this.asyncKeys = [...Object.keys(Br), `super`]),
+      (this.asyncKeys = __mtCreepsLite() ? [] : [...Object.keys(Br), `super`]), // [MT-HOOK] legacyMeshes (mt: no async jungle / super model builds)
       (this.builds = new Ur(this.defs, this.asyncKeys)));
     for (let e of Object.keys(Bn)) e !== `super` && this.ensureType(e, !0);
     ((this.needed = []), (this.missing = this.asyncKeys.length));
@@ -13118,6 +13119,7 @@ var hi = class {
       e.app.on(`match`, this.onMatch));
   }
   ensureType(e, t) {
+    if (__mtCreepsLite()) { let l = this.types.get(e); if (l || this.failed.has(e) || !this.defs[e]) return l || null; if ((l = __mtCreepLite(e, this.defs[e], e in Br, di))) return (this.types.set(e, l), l); } // [MT-HOOK] legacyMeshes: geometry-free type (legacy cfg + anchors) for footprints / anchors
     let n = this.types.get(e);
     if (n || this.failed.has(e) || !this.defs[e]) return n || null;
     let r = this.builds.get(e);
@@ -13352,7 +13354,7 @@ var hi = class {
       h = this.planes;
     for (let t = 0; t < p.length; t++) {
       let n = p[t];
-      if ((n.kind !== e.MINION && n.kind !== e.MONSTER) || n.mtSprite) continue; // [MT-HOOK] hideCreepModel (mt sprites draw these)
+      if ((n.kind !== e.MINION && n.kind !== e.MONSTER) || n.mtSprite || __mtCreepsLite()) continue; // [MT-HOOK] hideCreepModel (mt sprites draw these; legacyMeshes: also before sprites.js flags a new unit)
       let s = this.byId.get(n.id);
       if (!s) {
         let t = this.typeFor(n);

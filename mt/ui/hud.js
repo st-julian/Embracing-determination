@@ -29,6 +29,7 @@ import { Minimap } from './minimap.js';
 import { Plates } from './plates.js';
 import { Scoreboard, PauseMenu } from './screens.js';
 import { EndScreen } from './victory.js';
+import { LoadingScreen } from './loading.js';
 import { FORMS } from '../data/species.js';
 import { TYPE_COLORS } from '../data/types.js';
 import { MT_EVENT as E } from '../sim/events.js';
@@ -69,17 +70,17 @@ export class MtHud {
     this.veilH = h('div.h1', { text: tr('hud.down', 'Your trainer is down') });
     this.veilN = h('div.n'); this.veil = h('div.veil', null, h('div.pn.vb', null, this.veilH, this.veilN));
     this.dock = h('div.dock');
-    this.sb = new Scoreboard(this); this.pause = new PauseMenu(this); this.end = new EndScreen(this);
+    this.sb = new Scoreboard(this); this.pause = new PauseMenu(this); this.end = new EndScreen(this); this.ld = new LoadingScreen(this);
     // touch: Menu / Scores buttons (top-left, >= 48 CSS px hit area); the label is for screen readers, the icon is pixel art
     const tb = (label, panel, icon) => {
-      const b = h('div.mbtn.tbn', { role: 'button', 'aria-label': label, 'data-play': true }, icon, h('i.hit'));
+      const b = h('div.mbtn.tbn', { role: 'button', 'aria-label': label, 'data-play': true }, icon, h('i.mt-tap'));
       b.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); this.app.fire('ui', { panel: this.panel === panel ? 'none' : panel }); });
       return b;
     };
     this.tbtns = h('div.tbtns', null, tb(tr('hud.menuBtn', '\u2261 Menu'), 'menu', tbIcon('menu')), tb(tr('hud.scoresBtn', 'Scores'), 'scoreboard', tbIcon('scores')));
     this.tpad = h('div.tpad');   // touch fallback cluster (used only while no input-layer touch cluster is active: app.mtTouch)
     this.game = h('div.game', null, this.veil, this.tbtns, this.top.el, this.mm.el, this.feed, this.se, this.banner, this.toasts, this.dock, this.tpad);
-    this.root.append(this.game, this.sb.el, this.pause.el, this.end.el);
+    this.root.append(this.game, this.sb.el, this.pause.el, this.end.el, this.ld.el);
     this.cards = new Map(); this.multi = false; this.bannerQ = []; this.bannerOn = null; this.bannerT = 0; this.seT = 0; this.lastSE = 0;
     this.plates = new Plates(this);
     globalThis.__mtPlate = (bars, g, st, frame, bucket) => this.platesOn && this.plates.draw(bars, g, st, frame, bucket);
@@ -239,15 +240,16 @@ export class MtHud {
    *  toasts, callout). Used by the legacy occluders and, per frame, by plates.flush() (plates are hidden, not faded). */
   maskEls() {
     const out = [];
-    for (const c of this.dock.querySelectorAll('.pn, .ab')) out.push(c);
+    for (const c of this.dock.querySelectorAll('.pn, .mt-ab')) out.push(c);
     out.push(this.mm.el);
     for (const c of this.top.el.children) out.push(c);
     for (const c of this.feed.children) out.push(c);
     for (const c of this.banner.querySelectorAll('.bn')) out.push(c);
     for (const c of this.toasts.children) out.push(c);
     if (this.se.classList.contains('on')) out.push(this.se);
+    if (this.denyEl && this.denyEl.classList.contains('on') && performance.now() - this._deny.t < 1400) out.push(this.denyEl);
     if (this.touch) { for (const c of this.tbtns.children) out.push(c); for (const c of this.tpad.children) if (!c.hidden) out.push(c); }
-    for (const c of document.querySelectorAll('.mt-hudmask')) out.push(c);   // other layers' on-screen controls (touch cluster)
+    for (const c of document.querySelectorAll('.mt-hudmask, #mt-guide .gl.on, #mt-hints')) out.push(c);   // other layers' panels (guide line, controls card, opt-in .mt-hudmask)
     return out;
   }
   rects(out) {
@@ -271,9 +273,42 @@ export class MtHud {
   }
 
   toast(text, kind = '', glyph = '') {
-    const t = h('div.toast' + (kind ? '.' + kind : ''), { html: `<span>${text}</span>${glyph || ''}` });
-    this.toasts.appendChild(t); while (this.toasts.children.length > 3) this.toasts.firstChild.remove();
+    // one line per message: the same prompt again within 2.5 s is not repeated; at most 2 prompts on screen
+    const now = performance.now(), key = kind + '|' + text;
+    if (this._lastToast && this._lastToast.key === key && now - this._lastToast.t < 2500) return;
+    this._lastToast = { key, t: now };
+    const t = h('div.mt-toast' + (kind ? '.' + kind : ''), { html: `<span>${text}</span>${glyph || ''}` });
+    this.toasts.appendChild(t); while (this.toasts.children.length > 2) this.toasts.firstChild.remove();
     setTimeout(() => t.remove(), kind === 'ask' ? 3000 : 1800);
+  }
+  /**
+   * A refused command (sim mt_deny: locked move, no target, out of range, nothing to swap to…): a tiny note next to the
+   * controls — above the right-hand touch cluster, or above the local card on pad / keyboard — and a short shake of the
+   * matching card button. One note at a time (a new refusal replaces it), never over the fight.
+   */
+  deny(text, code, trainerId) {
+    if (!text) return;
+    const now = performance.now(), el = this.denyEl || (this.denyEl = h('div.mt-deny'));
+    if (!el.parentNode) this.game.appendChild(el);
+    const same = this._deny && this._deny.text === text && now - this._deny.t < 1400;
+    this._deny = { text, t: now };
+    if (!same) el.textContent = text;
+    const u = this.u || 1, T = this.app.mtTouch, card = this.cards.get(trainerId);
+    let pos = null;
+    if (this.touch && T && T.active && T.rects) {
+      let top = Infinity, right = 0;
+      for (const r of T.rects()) if (r && r.width > 0 && r.width < 118 && r.left > innerWidth * 0.5) { top = Math.min(top, r.top); right = Math.max(right, r.right); }
+      if (top < Infinity) pos = { right: Math.round((innerWidth - right) / u), bottom: Math.round((innerHeight - top) / u) + 4 };
+    }
+    const btn = !pos && card && card.denyButton ? card.denyButton(code) : null;   // above the refused card button
+    if (btn) { const r = btn.getBoundingClientRect(); pos = { left: Math.round((r.left + r.width / 2) / u), bottom: Math.round((innerHeight - r.top) / u) + 4, center: true }; }
+    if (!pos && card) { const r = card.root.getBoundingClientRect(); if (r.width > 0) pos = { left: Math.round(r.left / u), bottom: Math.round((innerHeight - r.top) / u) + (card.multiMode ? 16 : 6) }; }
+    if (!pos) pos = { left: Math.round(innerWidth / u / 2), bottom: 60, center: true };
+    el.style.left = pos.left != null ? pos.left + 'px' : ''; el.style.right = pos.right != null ? pos.right + 'px' : '';
+    el.style.bottom = pos.bottom + 'px'; setCls(el, 'ctr', !!pos.center);
+    if (pos.center) { const wh = el.getBoundingClientRect().width / u, Wh = innerWidth / u; el.style.left = Math.round(Math.max(4 + wh / 2, Math.min(Wh - 4 - wh / 2, pos.left))) + 'px'; }   // keep it on screen
+    setCls(el, 'on', false); void el.offsetWidth; setCls(el, 'on', true);
+    if (card && card.denyShake) card.denyShake(code);
   }
   /** queue a centre banner: {h1, h2, icon:formId|spriteId, kind:'gold'|'blue'|'red'|''} */
   bannerPush(b) { this.bannerQ.push(b); if (this.bannerQ.length > 4) this.bannerQ.shift(); }
@@ -342,7 +377,13 @@ export class MtHud {
         case E.FAINT: {
           const killer = this.unitIcon(w, ev.killer);
           this.feedRow('', [killer || '⚔', '▶', { icon: ev.form, col: '#e6e0d0' }, { text: tr('feed.fainted', '{name} fainted', { name: ev.name }), side: this.side(w, f, ev.trainer) }]);
-          if (this.isLocal(ev.trainer)) this.toast(tr('toast.fainted', '{name} fainted! Swap', { name: ev.name }), 'warn', glyphHTML('swap', this.padFor(this.localMap().get(ev.trainer))));
+          if (this.isLocal(ev.trainer)) {
+            // only suggest a swap when there is a healthy monster on the bench
+            const tu = w.units.get(ev.trainer), T = tu && tu.mtTrainer, act = T && T.party[T.activeIdx];
+            const bench = T && T.party.find((r, i) => i !== T.activeIdx && !r.fainted && !r.evolving);
+            if (bench) this.toast(tr('toast.fainted', '{name} fainted! Swap', { name: ev.name }), 'warn', glyphHTML('swap', this.padFor(this.localMap().get(ev.trainer))));
+            else this.toast(tr('toast.faintedRest', '{name} fainted! Back in {n}s', { name: ev.name, n: Math.max(1, Math.ceil(((act && act.faintUntil) || w.time) - w.time)) }), 'warn');
+          }
           break;
         }
         case 'kill': {
@@ -364,7 +405,7 @@ export class MtHud {
         case E.CAPTURE_FAIL: if (this.isLocal(ev.trainer)) this.toast(tr('toast.breakFree', 'Oh no! It broke free!'), 'warn'); break;
         case E.CAPTURE_READY: if (this.isLocal(ev.trainer)) { this.plates.captureHint.set(ev.target, performance.now()); this.toast(tr('toast.weak', '{name} is weak — throw an orb!', { name: ev.name }), 'ask', glyphHTML('capture', this.padFor(this.localMap().get(ev.trainer)))); } break;
         case E.CONFIRM_REPLACE: if (this.isLocal(ev.trainer)) this.toast(ev.targetName ? tr('toast.release', 'Release {name} Lv{level} for {target}? Throw again', { name: ev.name, level: ev.level, target: ev.targetName }) : tr('toast.partyFull', 'Party full — throw again to release {name}', { name: ev.name || tr('toast.bench', 'bench') }), 'ask', glyphHTML('capture', this.padFor(this.localMap().get(ev.trainer)))); break;
-        case E.DENY: if (this.isLocal(ev.trainer) && ev.code !== 'cooldown') this.toast(ev.text || ev.code, 'warn'); break;
+        case E.DENY: if (this.isLocal(ev.trainer) && ev.code !== 'cooldown') this.deny(ev.text || ev.code, ev.code, ev.trainer); break;
         case E.HIT: {
           if (!ev.eff) break;
           const src = w.units.get(ev.src); const owner = src && src.mtMon ? src.mtMon.ownerId : -1;
@@ -386,7 +427,11 @@ export class MtHud {
     art.pumpArt(this.app.state === 'end' ? 12 : 4);
     const inGame = (f.state === 'game' || f.state === 'end') && !!w;
     document.body.classList.toggle('mt-ingame', f.state === 'game');
-    this.root.style.display = inGame ? '' : 'none';
+    // pixel loading screen (loading.js) in place of the legacy one (hidden: body.mt-loadui)
+    const loading = this.ld.enabled && f.state === 'loading' && !!w;
+    this.ld.update(f, loading); document.body.classList.toggle('mt-loadui', this.ld.enabled && f.state === 'loading');
+    if (loading) { this.root.style.display = ''; this.game.hidden = true; this.platesOn = false; return; }
+    this.root.style.display = inGame || this.ld.shown ? '' : 'none';
     this.platesOn = inGame;
     if (!inGame) { if (this.pause.open) this.pause.setOpen(false); return; }
     this.stats.consume(f);

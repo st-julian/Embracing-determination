@@ -32,6 +32,8 @@ export function install(mt) {
       const T = MINIONS.types[src.subtype];
       if (T && T.structureMult) return T.structureMult;
     }
+    // QUICK mode (rules.js): towers shoot minions softer so a wave can carry a siege in the single lane
+    if (src && src.kind === KIND.TOWER && tgt && tgt.kind === KIND.MINION && mt.rules && mt.rules.M.wave && mt.rules.M.wave.towerDmg) return mt.rules.M.wave.towerDmg;
     return 1;
   });
   mt.on('preTick', leashMinions);
@@ -49,11 +51,13 @@ export function waveMult(waveNo) {
 
 /** [MT-HOOK] waveComposition. @returns {string[]} legacy subtypes in spawn order */
 export function composition(mt, team, lane, waveNo) {
-  const enemy = 1 - team, out = ['melee', 'melee', 'melee'];
+  const WV = mt.rules && mt.rules.M.wave;   // QUICK: bigger waves, siege more often (one lane, six trainers)
+  const enemy = 1 - team, out = Array((WV && WV.melee) || 3).fill('melee');
   let kind = null;
-  if (inhibitorDown(mt, enemy, lane)) { out.push('super'); kind = 'super'; }
-  else if (waveNo % MINIONS.siegeEvery === 0) { out.push('siege'); kind = 'siege'; }
-  out.push('caster', 'caster', 'caster');
+  if (mt.rules && !mt.rules.laneActive(lane)) { /* no wave in this lane (QUICK) */ }
+  else if (inhibitorDown(mt, enemy, lane)) { out.push('super'); kind = 'super'; }
+  else if (waveNo % ((WV && WV.siegeEvery) || MINIONS.siegeEvery) === 0) { out.push('siege'); kind = 'siege'; }
+  for (let i = 0; i < ((WV && WV.caster) || 3); i++) out.push('caster');
   // one mt_wave event per team and wave (legacy composes lanes in order top, mid, bot)
   const W = mt._waveAcc || (mt._waveAcc = {});
   const key = team + ':' + waveNo;
@@ -63,8 +67,11 @@ export function composition(mt, team, lane, waveNo) {
   if (kind === 'super') acc.super.push(lane);
   if (acc.lanes.length === LANES.length) {
     delete W[key];
-    mt.emit(mt.E.WAVE, { team, waveNo, lanes: acc.lanes, siege: acc.siege, super: acc.super, mult: +waveMult(waveNo).toFixed(2) });
+    const lanes = mt.rules ? acc.lanes.filter((l) => mt.rules.laneActive(l)) : acc.lanes;
+    mt.emit(mt.E.WAVE, { team, waveNo, lanes, siege: acc.siege, super: acc.super, mult: +waveMult(waveNo).toFixed(2) });
   }
+  // QUICK mode (rules.js): lanes without structures get no waves (an empty list = no minions for that lane)
+  if (mt.rules && !mt.rules.laneActive(lane)) return [];
   return out;
 }
 
@@ -80,6 +87,13 @@ export function applyStats(mt, u) {
   if (legacy) u.stats.armor = (legacy.armor || 0) * k;
   u.name = T.name;
   u.mtWaveMult = k;
+  if (mt.rules && mt.rules.M.minionSpeed !== 1) u.mtSpeedMul = mt.rules.M.minionSpeed;   // QUICK: waves keep up with faster trainers
+  const WV = mt.rules && mt.rules.M.wave;
+  if (WV && WV.hp && WV.hp !== 1) u.maxHp = u.hp = u.maxHp * WV.hp;
+  if (WV && WV.dmg && WV.dmg !== 1) u.stats.ad *= WV.dmg;
+  const H = mt.rules && mt.rules.teamHandicap(u.team);   // Easy: the human team's waves hold the lane
+  if (H && H.minionHp && H.minionHp !== 1) u.maxHp = u.hp = u.maxHp * H.minionHp;
+  if (H && H.minionDmg && H.minionDmg !== 1) u.stats.ad *= H.minionDmg;
   mt.L.snapshotBaseStats(u);
 }
 
@@ -98,6 +112,8 @@ export function aggroClass(mt, minion, other) {
     }
     return 7;
   }
+  // Easy (rules.js ASSIST.focusHuman): minions hit a HUMAN trainer only when nothing else is around (legacy class 9)
+  if (isTrainer(other) && mt.rules && mt.rules.focusHuman(minion.team, other) < 0.5) return 9;
   if (isTrainer(other) && hurtingAllyOf(mt, other, minion.team, minion.x, minion.y, R, 1.5)) return 1;
   return undefined;
 }

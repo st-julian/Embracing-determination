@@ -112,6 +112,7 @@ export default {
   'feed.destroyed': '{s} destroyed',
   // toasts
   'toast.fainted': '{name} fainted! Swap',
+  'toast.faintedRest': '{name} fainted! Back in {n}s',   // HUD: faint toast when there is nothing to swap to
   'toast.siege': 'Siege minions are marching!',
   'toast.breakFree': 'Oh no! It broke free!',
   'toast.weak': '{name} is weak — throw an orb!',
@@ -197,6 +198,7 @@ export default {
   'end.val.ko': '{n} KO', 'end.val.caught': '{n} caught', 'end.val.evo': '{n} evo',
   'end.col.trainer': 'Trainer', 'end.col.party': 'Party', 'end.col.ko': 'KO', 'end.col.faint': 'Fnt', 'end.col.catch': 'Cap', 'end.col.evo': 'Evo', 'end.col.dmg': 'Dmg',
   'end.vphR': '{time} · KOs {a}–{b}',
+  'end.legend': 'KO = monsters + trainers knocked out · Fnt = your monsters that fainted · Cap = caught',   // HUD: victory stats legend
   'end.stat.ko': 'KO', 'end.stat.catch': 'Catch',
 
   // ------------------------------------------------------------------ lobby (mt/ui/lobby.js)
@@ -256,6 +258,8 @@ export default {
   'loading.tip': 'Tip',
   'loading.trainer': 'Trainer',
   'loading.role.baron': 'Baron Lane', 'loading.role.jungle': 'Jungle', 'loading.role.mid': 'Mid Lane', 'loading.role.duo': 'Duo Lane', 'loading.role.support': 'Support',
+  'load.tip': 'Tip',   // HUD: loading screen (mt/ui/loading.js)
+  'load.you': 'You',   // HUD: loading screen (mt/ui/loading.js)
   'tip.0': 'Weaken a wild monster, then throw a Capture Orb — low HP means a better chance.',
   'tip.1': 'Type matchups matter: a super-effective move hits much harder. Swap to the right monster!',
   'tip.2': 'Your benched monster slowly heals inside its orb. Swap to rest a tired partner.',
@@ -419,6 +423,49 @@ export default {
   'net.copied': 'Copied!',
   'net.hostLeft': 'The host closed the game',
   'net.peerFailed': 'Could not reach the connection server',
-  'net.p2pFailed': 'Could not connect to the host (the network may block direct connections)',
+  'net.p2pFailed': 'Could not connect. Playing on the same Wi-Fi works; otherwise try another network (e.g. a phone hotspot).',
+  'net.away': '{who} switched to another app… waiting {s} more seconds',
+  'net.version': 'Your game versions differ. Both of you: reload the page.',
+  'net.versionOther': '{name} has a different game version. Both of you: reload the page.',
   'net.hint.pick': 'select', 'net.hint.ok': 'OK',
+  // ------------------------------------------------------------------ front-end flow (mt/ui/menu.js, lobby.js, guide.js)
+  'menu.solo': 'Play solo', 'menu.solo.sub': 'Battle the bots',
+  'menu.friend': 'Play with a friend', 'menu.friend.sub': 'Online, together',
+  'menu.local': 'Same screen', 'menu.local.sub': '2-4 players, one screen',
+  'menu.settings': 'Settings', 'menu.close': 'Close',
+  'opt.lang': 'Language', 'opt.difficulty': 'Bots', 'opt.mode': 'Length',
+  'opt.difficulty.easy': 'Easy', 'opt.difficulty.easy.sub': 'For your first games',
+  'opt.difficulty.normal': 'Normal', 'opt.difficulty.normal.sub': 'Once you know the ropes',
+  'opt.difficulty.hard': 'Hard', 'opt.difficulty.hard.sub': 'A real challenge!',
+  'opt.mode.quick': 'Quick', 'opt.mode.quick.sub': 'A short match',
+  'opt.mode.classic': 'Classic', 'opt.mode.classic.sub': 'The full match',
+  'starter.title': 'Choose your partner!', 'starter.titleJoin': 'Pick a partner to join!',
+  'starter.choose': 'I choose you!', 'starter.chosen': '{name}, I choose you!', 'starter.hint.pick': 'Pick',
+  'starter.desc.cindle': 'A spirited Fire type. Strong against Grass!',
+  'starter.desc.puddlet': 'A laid-back Water type. Strong against Fire!',
+  'starter.desc.sproutle': 'A gentle Grass type. Strong against Water!',
+  'lobby.row.starter': 'Partner',
+  'guide.catch': 'Fight the wild {name}!', 'guide.catchNow': 'Now! Throw an orb!', 'guide.lane': 'Head to the lane!',
+  'guide.evolve': '{name} can evolve!', 'guide.push': 'Knock down the tower!', 'guide.help': 'Help your teammate!',
+  'guide.heal': 'Go home and heal!', 'guide.someone': 'monster', 'guide.skip': 'Skip',
+  'room.invite': 'Invite a friend!', 'room.code': 'Code', 'room.copy': 'Copy link', 'room.share': 'Share…',
+  'room.scan': "Scan the QR with your friend's camera", 'room.codeHint': 'Your friend picks "Play with a friend" and joins room {code}.',
+  'room.shareText': "Let's play Sundered Vale together!", 'room.creating': 'Making a room…', 'room.retry': 'Try again',
+  'room.together': 'Together', 'room.together.sub': 'vs bots', 'room.versus': 'Against', 'room.versus.sub': 'each other',
+  'room.waitFriend': 'Waiting for your friend…', 'room.notReady': 'Getting ready…', 'room.waitStart': 'Ready to start', 'room.waiting': 'Waiting…',
+  'room.others': 'Other rooms', 'room.ready': 'Ready?', 'room.status.alone': 'Send the link or the QR to your friend', 'room.status.go': 'Press START!',
+  'room.you': 'You', 'room.friend': 'Friend', 'room.friendN': 'Friend {n}', 'room.rename': 'Change your name', 'room.namePh': 'Your name', 'starter.go': "Let's go!",
+
+  // ------------------------------------------------------------------ first-match card (3 visual hints) + contextual tips (input owner)
+  'hint3.title': 'How to play',
+  'hint3.move': 'Move', 'hint3.attack': 'Attack', 'hint3.catch': 'Catch',
+  'hint3.t.move': 'Drag on the left side', 'hint3.t.attack': 'Tap — hold to keep going', 'hint3.t.catch': 'Weaken it, then drag the orb',
+  'hint3.p.move': 'Left stick', 'hint3.p.attack': 'Your monster attacks', 'hint3.p.catch': 'Weaken it, then throw',
+  'hint3.k.move': 'Right-click or WASD', 'hint3.k.attack': 'Your monster attacks', 'hint3.k.catch': 'Weaken it, then throw',
+  'tip3.attack.touch': 'Tap to attack!', 'tip3.attack.pad': 'Press {g} to attack!',
+  'tip3.orb.touch': 'Now! Drag the orb onto it and let go', 'tip3.orb.pad': 'Now! {g} throws the orb',
+  'tip3.a1.touch': 'Drag a move to aim it', 'tip3.a1.pad': '{g} uses a move',
+  'tip3.evolve.touch': 'Ready to evolve — tap!', 'tip3.evolve.pad': 'Ready to evolve — {g}!',
+  'tip3.potion.touch': 'Low HP — use a potion', 'tip3.potion.pad': 'Low HP — {g} potion',
+  'touch.locked': 'Evolve to unlock',
 };
