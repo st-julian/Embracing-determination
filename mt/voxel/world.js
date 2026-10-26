@@ -26,7 +26,7 @@ import { fadeMaterial, FadeDriver } from './fade.js';
 
 /** 'voxel' | '3d' from the URL (default 3d until the voxel world is the default) — also published as app.mtWorldStyle */
 export function worldStyle() {
-  let s = 'voxel';   // default look; ?world=3d keeps the legacy 3D world
+  let s = '3d';   // default look (user's pick after the iPad test); ?world=voxel = the voxel look
   try { const q = new URLSearchParams(location.search).get('world'); if (q === 'voxel' || q === '3d') s = q; } catch (e) { /* no location */ }
   try { const a = globalThis.__moba; if (a) a.mtWorldStyle = s; } catch (e) { /* */ }
   return s;

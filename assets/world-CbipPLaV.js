@@ -1287,9 +1287,9 @@ vec3 pixPoster(vec3 c, float steps, float dith) {
 `,
   VOXEL_ON = (() => {
     try {
-      return new URLSearchParams(location.search).get(`world`) !== `3d`; // voxel is the default look; ?world=3d = legacy
+      return new URLSearchParams(location.search).get(`world`) === `voxel`; // 3D is the default look; ?world=voxel = voxel
     } catch (e) {
-      return !0;
+      return !1;
     }
   })(),
   PIXEL_ON = (() => {
