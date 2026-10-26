@@ -142,11 +142,15 @@ export const EXTRA_HUMAN_TEAM = 0.06;
  *   safeEvolve   the evolving monster is invulnerable (and cannot be interrupted) — evolve in the middle of a fight
  *   capture      {bonus, first}: added to the human's catch chance (DESIGN §6, capped at pMax); `first` again while the
  *                party holds only the starter (the first catch of the match should not fail twice in a row) — null = off
+ *   towerYield   s; > 0: an enemy tower locked onto the human trainer lets go as soon as anything else is in its range
+ *                (minion, monster, bot trainer) — towers keep a valid target otherwise — unless the human or its monster
+ *                damaged one of the tower's trainers within its range in the last `towerYield` s (the tower protects its
+ *                trainer). 0 = off (masher deaths under towers with allied minions in range, docs/BALANCE.md)
  */
 export const ASSIST = {
-  easy: { focusHuman: 0.2, trainerHp: 1.35, regen: 0.025, rescue: { hp: 0.35, shield: 0.45, haste: 0.45, dur: 3, cd: 20 }, petPotion: 0.3, guard: 8, guardTaken: 0.25, lastHit: 6, execute: 0.6, safeEvolve: true, capture: { bonus: 0.15, first: 0.3 } },
-  normal: { focusHuman: 0.6, trainerHp: 1.1, regen: 0.01, rescue: { hp: 0.25, shield: 0.25, haste: 0.3, dur: 2, cd: 30 }, petPotion: 0, guard: 4, guardTaken: 0.5, lastHit: 3, execute: 0.2, safeEvolve: true, capture: { bonus: 0.05, first: 0.15 } },
-  hard: { focusHuman: 1, trainerHp: 1, regen: 0, rescue: null, petPotion: 0, guard: 2, guardTaken: 0.6, lastHit: 0, execute: 0, safeEvolve: false, capture: null },
+  easy: { focusHuman: 0.2, trainerHp: 1.35, regen: 0.025, rescue: { hp: 0.35, shield: 0.45, haste: 0.45, dur: 3, cd: 20 }, petPotion: 0.3, guard: 8, guardTaken: 0.25, lastHit: 6, execute: 0.6, safeEvolve: true, capture: { bonus: 0.15, first: 0.3 }, towerYield: 2 },
+  normal: { focusHuman: 0.6, trainerHp: 1.1, regen: 0.01, rescue: { hp: 0.25, shield: 0.25, haste: 0.3, dur: 2, cd: 30 }, petPotion: 0, guard: 4, guardTaken: 0.5, lastHit: 3, execute: 0.2, safeEvolve: true, capture: { bonus: 0.05, first: 0.15 }, towerYield: 0 },
+  hard: { focusHuman: 1, trainerHp: 1, regen: 0, rescue: null, petPotion: 0, guard: 2, guardTaken: 0.6, lastHit: 0, execute: 0, safeEvolve: false, capture: null, towerYield: 0 },
 };
 
 export const DIFFICULTY = {

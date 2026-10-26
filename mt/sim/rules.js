@@ -12,7 +12,7 @@
 //   comeback(team) -> {bonus, gap}                             (progression.js)
 //   botSkill(trainer) -> BOT_SKILL profile                     (mt/ai/*, combat.js auto-cast hold)
 //   trainerSpeedMult(trainer), petSpeedMult(owner)             (move speed: QUICK ×1.35, base sprint)
-//   assist (ASSIST profile), assisted(trainer), trainerHpMult(trainer), focusHuman(attacker, target), safeEvolve(),
+//   assist (ASSIST profile), assisted(trainer), trainerHpMult(trainer), focusHuman(attacker, target), towerYield(tower, u), safeEvolve(),
 //   holdFor(pet, target) (capture window), captureBonus(trainer), spawnPoint(team, slot), lastHit (credit stash for creditOf / faint events)
 // Player assists (second playtest, docs/PLAYTEST.md): human trainers in a humans-vs-bots match get, per difficulty
 // (options.js ASSIST): bots that focus them less, more trainer HP + regen, a low-HP rescue (shield + haste), an automatic
@@ -125,6 +125,9 @@ export function install(mt) {
   R.trainerHpMult = (tr) => R.hpMult(tr) * (R.assisted(tr) ? AS.trainerHp : 1);
   /** weight of `target` for an attacker of `attackerTeam`: below 1 for a HUMAN trainer the bots should leave alone */
   R.focusHuman = (attackerTeam, target) => (target && target.mtTrainer && target.team !== attackerTeam && R.assisted(target) ? AS.focusHuman : 1);
+  /** s: `tower` may drop HUMAN trainer `u` it is locked onto for any other target unless u / its monster hit one of the
+   *  tower's trainers in its range within this window (structures.js); 0 = keep the target (bots, Normal / Hard) */
+  R.towerYield = (tower, u) => (AS.towerYield > 0 && tower && u && u.mtTrainer && u.team !== tower.team && R.assisted(u) ? AS.towerYield : 0);
   R.safeEvolve = () => !!AS.safeEvolve;
   /** catch-chance bonus for `tr`'s throws (ASSIST.capture; `first` while the party holds only the starter) */
   R.captureBonus = (tr) => {

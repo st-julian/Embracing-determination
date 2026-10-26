@@ -6,7 +6,9 @@
 // mt rules on top:
 //  * Target priority ([MT-HOOK] towerTarget): enemy trainer/monster that is hitting an allied trainer/monster in range
 //    (aggro) > closest minion > closest monster > trainer. A tower keeps its current target while it stays valid
-//    (LoL-style: no ping-pong between minions) unless an aggro target appears.
+//    (LoL-style: no ping-pong between minions) unless an aggro target appears. Easy (rules.js focusHuman / towerYield):
+//    a HUMAN trainer is picked last, and a tower locked onto one lets go as soon as anything else is in range — unless
+//    the human or its monster just hit one of the tower's trainers there (the tower protects its trainer).
 //  * Shots ramp +25 %/shot on the same monster/trainer (cap ×2); the ramp resets when the tower changes target or has
 //    not fired for TOWER_CFG.heatResetAfter s. The legacy champion heat ramp is divided out for trainers.
 //  * Aggro is recorded from ANY damage (basic attacks AND monster abilities) through the post-damage hook.
@@ -52,6 +54,7 @@ function recordAggro(mt, src, tgt) {
   if (!(isTrainer(src) || isPet(src))) return;
   if (tgt.team === src.team || !(isTrainer(tgt) || isPet(tgt))) return;
   src.mtHitAllyT = mt.world.time; src.mtHitAllyId = tgt.id;
+  if (isTrainer(tgt)) { src.mtHitTrT = mt.world.time; src.mtHitTrId = tgt.id; }   // trainers only (tower yield, Easy)
 }
 
 /**
@@ -76,13 +79,34 @@ function valid(mt, tower, u) {
     mt.L.edgeDistPrev(tower, u) <= tower.stats.attackRange;
 }
 
-const CLASS = { aggro: 0, minion: 1, monster: 2, trainer: 3 };
+const CLASS = { aggro: 0, minion: 1, monster: 2, trainer: 3, human: 4 };
 
 function classOf(mt, tower, u) {
   if (u.kind === KIND.MINION) return CLASS.minion;
-  if (u.mtTrainer && mt.rules && mt.rules.focusHuman(tower.team, u) < 0.5) return CLASS.trainer;   // Easy: a HUMAN trainer last
+  if (u.mtTrainer && mt.rules && mt.rules.focusHuman(tower.team, u) < 0.5) return CLASS.human;   // Easy: a HUMAN trainer last
   if (hurtingAllyOf(mt, u, tower.team, tower.x, tower.y, tower.stats.attackRange + 1.5)) return CLASS.aggro;
   return u.mtMon ? CLASS.monster : CLASS.trainer;
+}
+
+/** Is `u` hurting a TRAINER of `team` standing within `radius` of (x, y) (recorded damage within `window` s, or an
+ *  attack winding up on one)? */
+function hurtingTrainerOf(mt, u, team, x, y, radius, window) {
+  const w = mt.world, r2 = radius * radius;
+  const check = (id) => { const v = id >= 0 ? w.units.get(id) : null; return !!(v && v.team === team && isTrainer(v) && dist2(x, y, v.prevX, v.prevY) <= r2); };
+  if (u.mtHitTrT > w.time - window && check(u.mtHitTrId)) return true;
+  return u.attackWindupEnd > 0 && check(u.attackTargetId);
+}
+
+/** Easy (rules.js towerYield): may `tower` drop the HUMAN trainer `u` it is locked onto? Not while u or its active
+ *  monster has just hit one of the tower's trainers within its range (the tower protects its trainer). */
+function letsGo(mt, tower, u) {
+  const win = mt.rules && mt.rules.towerYield ? mt.rules.towerYield(tower, u) : 0;
+  if (!(win > 0)) return false;
+  const r = tower.stats.attackRange + 1.5;
+  if (hurtingTrainerOf(mt, u, tower.team, tower.x, tower.y, r, win)) return false;
+  const T = u.mtTrainer, rec = T && T.activeIdx >= 0 ? T.party[T.activeIdx] : null;
+  const pet = rec && rec.unitId >= 0 ? mt.world.units.get(rec.unitId) : null;
+  return !(pet && pet.alive && hurtingTrainerOf(mt, pet, tower.team, tower.x, tower.y, r, win));
 }
 
 /** [MT-HOOK] towerTarget. @returns {object|null} */
@@ -98,8 +122,10 @@ export function pickTarget(mt, tower) {
     const d = dist2(tower.x, tower.y, u.prevX, u.prevY);
     if (c < bc || (c === bc && (d < bd || (d === bd && u.id < best.id)))) { best = u; bc = c; bd = d; }
   }
-  // stickiness: keep a valid current target unless a punish (aggro) target shows up and the current one is not one
-  if (cur && (curCls === CLASS.aggro || bc !== CLASS.aggro)) best = cur;
+  // stickiness: keep a valid current target unless a punish (aggro) target shows up and the current one is not one;
+  // Easy: a HUMAN trainer is dropped as soon as anything else is in range (letsGo: unless it protects its trainer)
+  const drop = cur && curCls === CLASS.human && bc < CLASS.human && letsGo(mt, tower, cur);
+  if (cur && !drop && (curCls === CLASS.aggro || bc !== CLASS.aggro)) best = cur;
   if (best !== cur) {
     tower.mtRampId = best ? best.id : -1; tower.mtRampShots = 0;
     if (best) {
