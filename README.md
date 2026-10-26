@@ -1,14 +1,15 @@
 # Sundered Vale: Monster Trainer Arena
 
-A 3v3 **Monster Trainer MOBA** that runs in the browser. You are a trainer, not a champion. You walk into the
-jungle with no monsters, weaken a wild monster, catch it with a Capture Orb and train it in lane. You evolve it
-when you choose to (Lv 5 and Lv 10). Then you take your team of trainers and monsters through the towers to the
-enemy Nexus.
+A 3v3 **Monster Trainer MOBA** that runs in the browser. You are a trainer, not a champion. You pick a starter
+monster (it begins at Lv 3), weaken wild monsters, catch a second one with a Capture Orb and train both in lane.
+You evolve them when you choose to (Lv 5 and Lv 10). Then you take your team of trainers and monsters through the
+towers to the enemy Nexus.
 
 It is built on top of the existing *Sundered Vale* three.js MOBA. The map, movement, combat core, camera, bot AI,
-renderer, towers and minions were reused and extended, not rewritten. The look is a Pokémon Black/White-era
-2.5D style pushed further ("HD-2D"): a lit, tilted 3D world with crisp, animated, lit pixel-art trainers and
-monsters.
+renderer, towers and minions were reused and extended, not rewritten. The look is a **detailed voxel take on the
+Pokémon Black/White overworld**: a voxel world built from the real map (patterned stone bases, tiled-roof towers,
+tree walls, tall grass, a living river) with animated, outlined voxel trainers and monsters. The previous 3D look
+is still available with `?world=3d`.
 
 - Japanese is the default language. English: add `?lang=en`, or change *Lang* in the lobby.
 - It is controller-first. A PS5 DualSense works out of the box; Xbox and other standard pads work too.
@@ -35,7 +36,7 @@ Useful URL options (combine with `&`):
 |---|---|
 | `?lang=en` / `?lang=ja` | UI language (default `ja`; remembered) |
 | `?quality=low` / `medium` / `high` | render quality (default: auto by device) |
-| `?pixel=1` | alternative "pixel-grid" render mode (whole frame drawn at 32 px per metre) |
+| `?world=3d` | the previous 3D world with pixel-sprite units instead of the voxel look |
 | `?autostart` | skip the title screen (solo vs bots) |
 | `?mtscenario=jungle` / `laning` / `teamfight` / `evolution` / `siege` / `base` / `boss` / `capture` | jump into a prepared match situation (testing and screenshots) |
 
@@ -43,16 +44,19 @@ The original game, before the transformation, is kept in `legacy/` for compariso
 
 ## How to play
 
+0. **Difficulty.** Easy is the default (bots go easier on human players, and your trainer gets extra HP and a low-HP
+   rescue). QUICK mode, the default, plays only the mid lane, about 35 % faster, with a 15-minute limit.
 1. **Title → Play → Lobby.** Join with ✕ (DualSense), A (Xbox), Enter (keyboard) or by tapping. Pick a
    **team** and a **trainer specialisation**, then ready up. Every slot without a human is a bot.
-2. **Catch your first monster.** You start with none. Go to a starter meadow next to your base and wear a wild
-   monster down with your sling. Throw a **Capture Orb** at it: the lower its HP, the better the odds, and a
-   slowed, rooted or stunned monster is easier to catch. The aim ring shows the current catch chance. You can
-   carry **two** monsters, one active and one resting on the bench.
+2. **Catch a second monster.** You start with your starter at Lv 3. Wear a wild monster down (your monster stops
+   attacking a weakened wild monster for a few seconds so it stays catchable), then throw a **Capture Orb**: the
+   lower its HP, the better the odds, and a slowed, rooted or stunned monster is easier to catch. The aim ring
+   shows the current catch chance. You can carry **two** monsters, one active and one resting on the bench.
 3. **Train.** Monsters gain XP from minions, wild monsters, enemy monsters and trainers, and towers. The benched
    monster also earns 30 % of that XP.
-4. **Evolve.** At Lv 5 and Lv 10 the EVOLVE button lights up and you choose the moment. Evolving takes 2.4 s,
-   during which the monster is vulnerable, and gives a new look, +35 % stats and a new or upgraded move.
+4. **Evolve.** At Lv 5 and Lv 10 the EVOLVE button lights up and you choose the moment. Evolving takes 1.2 s
+   (on Easy and Normal the monster is safe meanwhile and heals 30 %) and gives a new look, +35 % stats and a new
+   or upgraded move.
 5. **Win.** Push lanes with your minion waves, destroy the outer and inner towers, then an inhibitor and the
    Nexus towers, then the **Nexus**.
 
@@ -168,7 +172,8 @@ tools/slot node tools/touch-test.cjs                # phone / tablet touch layou
 ## Credits & licences
 - **Original game:** *Sundered Vale* (the provided build), with its bundled textures.
 - **Pixel font:** a subset of GNU Unifont (SIL OFL 1.1, `game/mt/i18n/fonts/LICENSE`).
-- **Art:** all monster, trainer and minion pixel art is generated procedurally by `game/art/sprites/`. No Nintendo
-  or Riot assets ship in this project.
+- **Art:** all voxel models (world, structures, trainers, monsters, minions) are generated procedurally in code
+  (`game/mt/voxel/`, baked by `tools/voxel-bake.mjs`), and the pixel art by `game/art/sprites/`. No Nintendo or
+  Riot assets ship in this project.
 - **Blind-test references:** the screenshots of Pokémon Black/White and League of Legends: Wild Rift used for
   blind comparisons were private references only. They are **not** included in the distributed ZIP.
