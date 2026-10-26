@@ -201,7 +201,7 @@ export function makeQA(mt, D) {
       if (w.tickNo % 30 === 0) for (const c of w.champions) {
         const T = c.mtTrainer; if (!T || !c.alive || c.statsDirty) continue;
         const avg = T.party.length ? T.party.reduce((a, r) => a + r.level, 0) / T.party.length : 0;
-        const want = (TRAINER.hp + TRAINER.hpPerAvgLevel * avg) * (T.spec === 'healing' ? 1 + SPECS.healing.passive.trainerHp : 1) * (mt.rules ? mt.rules.hpMult(c) : 1);
+        const want = (TRAINER.hp + TRAINER.hpPerAvgLevel * avg) * (T.spec === 'healing' ? 1 + SPECS.healing.passive.trainerHp : 1) * (mt.rules ? (mt.rules.trainerHpMult || mt.rules.hpMult)(c) : 1);
         // party levels can change in a postTick hook that runs after trainers' upkeep: only flag a mismatch that persists
         const mis = Math.abs(c.maxHp - want) > 1 && !c.buffs.some((b) => b.stats && (b.stats.maxHpBonus || b.stats.hp));
         const prev = (A.hpMis || (A.hpMis = {}))[c.id];

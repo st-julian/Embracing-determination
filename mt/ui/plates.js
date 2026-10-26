@@ -51,6 +51,7 @@ export class Plates {
    */
   spriteTop(bars, u, frame) {
     const app = this.hud.app, R = app.registry && app.registry.get && app.registry.get('mt-render'), sp = R && R.sprites;
+    if (sp && sp.voxel && sp.voxel.active) return sp.voxel.topScreen(bars, u, frame);   // [voxel] voxel models: just above the model's top
     if (!sp || !sp.k || !sp.atlas || !sp.artOf) return null;
     const id = sp.artOf(u), S = id && SPECIES_ART[id]; if (!S) return null;
     // the idle frame at the CURRENT art density (HD keys carry '#dens'): its height above the feet in screen px is

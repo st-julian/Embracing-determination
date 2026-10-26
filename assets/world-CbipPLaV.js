@@ -1285,6 +1285,13 @@ vec3 pixPoster(vec3 c, float steps, float dith) {
   return c * (q * q / l);
 }
 `,
+  VOXEL_ON = (() => {
+    try {
+      return new URLSearchParams(location.search).get(`world`) !== `3d`; // voxel is the default look; ?world=3d = legacy
+    } catch (e) {
+      return !0;
+    }
+  })(),
   PIXEL_ON = (() => {
     try {
       return new URLSearchParams(location.search).get(`pixel`) === `1`;
@@ -11708,6 +11715,44 @@ var Nr = class {
       mt(this.shared, e.renderer),
       (this.group.userData.cc0On = this.shared.uCc0On));
     let u = performance.now();
+    // (voxel world) in voxel mode the painted terrain / water / props / brush / atmosphere are not built at all (they
+    // would only sit hidden); _buildLegacy() still runs if the voxel world fails to load.
+    VOXEL_ON
+      ? (this.stats = { buildMs: Math.round(performance.now() - t), textureMs: Math.round(u - t), legacy: `skipped (voxel world)` })
+      : this._buildLegacy(t, u);
+    ((this._lod = {
+        far: null,
+        fx: -1e9,
+        fy: -1e9,
+        radius: 0,
+        t: 0,
+        cx: -1e9,
+        cz: -1e9,
+      }),
+      (this._brushNear = s.map((e) => ({
+        x: e.x,
+        y: e.y,
+        r2: (e.r + 1.4) * (e.r + 1.4),
+      }))));
+    // (voxel world) ?world=voxel: the voxel terrain / river / vegetation / structures (game/mt/voxel/world.js) replace this
+    // whole group, which stays built (hidden) as the ?world=3d fallback. app.mtWorldStyle = 'voxel' | '3d'.
+    try { globalThis.__moba && (globalThis.__moba.mtWorldStyle = VOXEL_ON ? `voxel` : `3d`); } catch (e) {}
+    VOXEL_ON &&
+      import(`../mt/voxel/world.js`)
+        .then((m) => {
+          m.worldStyle();
+          this.voxel = new m.VoxelWorld(this.ctx);
+          this.group.visible = !1;
+        })
+        .catch((e) => {
+          console.warn(`[world-art] voxel world failed, building the 3d world`, e);
+          try { globalThis.__moba && (globalThis.__moba.mtWorldStyle = `3d`); } catch (e2) {}
+          this.terrain || this._buildLegacy(performance.now(), performance.now());
+          this.group.visible = !0;
+        });
+  }
+  _buildLegacy(t, u) {
+    let e = this.ctx;
     ((this.terrain = Ot(this.shared, this.quality)),
       this.group.add(this.terrain.group),
       (this.water = Yt(this.shared)),
@@ -11732,20 +11777,6 @@ var Nr = class {
         brushTriangles: this.brush.stats.triangles,
         glows: this.props.glows.length,
       }),
-      (this._lod = {
-        far: null,
-        fx: -1e9,
-        fy: -1e9,
-        radius: 0,
-        t: 0,
-        cx: -1e9,
-        cz: -1e9,
-      }),
-      (this._brushNear = s.map((e) => ({
-        x: e.x,
-        y: e.y,
-        r2: (e.r + 1.4) * (e.r + 1.4),
-      }))),
       this.props.setQuality && this.props.setQuality(this.quality));
   }
   // (env BW fix) props hidden by the pixel-mode foreground cut must not keep casting shadows: their shadow-pass depth
@@ -11959,6 +11990,7 @@ vec2 cutFieldUV(vec2 p) { return (p - vec2(-20.0)) / 160.0; }
     }
   }
   update(t) {
+    if (this.voxel || !this.terrain) { this.shared.uTime.value = t.time; this.voxel && this.voxel.update(t); return; }
     let n = this.shared;
     n.uTime.value = t.time;
     if (this._cutVP && this.ctx.camera) { let c = this.ctx.camera; c.updateMatrixWorld(); this._cutVP.value.multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse); }
@@ -12206,11 +12238,12 @@ vec2 cutFieldUV(vec2 p) { return (p - vec2(-20.0)) / 160.0; }
   dispose() {
     (this._covRT && this._covRT.dispose(),
       this.scene.remove(this.group),
-      this.terrain.dispose(),
-      this.water.dispose(),
-      this.props.dispose(),
-      this.brush.dispose(),
-      this.atmos.dispose());
+      this.terrain && this.terrain.dispose(),
+      this.water && this.water.dispose(),
+      this.props && this.props.dispose(),
+      this.brush && this.brush.dispose(),
+      this.atmos && this.atmos.dispose(),
+      this.voxel && this.voxel.dispose());
     for (let e in this.textures) this.textures[e].dispose();
   }
 };

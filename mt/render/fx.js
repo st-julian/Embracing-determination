@@ -118,9 +118,11 @@ export class MtFx {
   /** world-space anchor info of a unit: {x, z, gy (ground), y (chest), h (height)} */
   unitWorld(u) {
     if (!u) return null;
-    const p = this.lerpPos(u), gy = heightAt(p.x, p.z), h = u.height || 1.2;
+    const p = this.lerpPos(u), gy = heightAt(p.x, p.z), h = this.voxTop(u) || u.height || 1.2;   // [voxel] the model's top
     return { x: p.x, z: p.z, gy, y: gy + h * 0.55, h, u };
   }
+  /** [voxel] voxel world style: the unit model's current top above the feet (m), else null (sprite heights stay) */
+  voxTop(u) { const R = this.ctx.registry && this.ctx.registry.get('mt-render'), V = R && R.sprites && R.sprites.voxel; return V && V.active && V.topOf ? V.topOf(u) : null; }
   simNow() { const w = this.world; return w ? w.time - DT * (1 - (this.alpha ?? 1)) : 0; }
   near(x, z, r = 34) { const V = this.V; return !V || V.near(x, z, r); }
   visibleAt(x, z) { const V = this.V; return !V || V.seenAt(x, z); }

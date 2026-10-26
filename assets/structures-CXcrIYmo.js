@@ -13349,7 +13349,21 @@ var sr = (t) =>
       }
       let p = this.decor;
       for (let t = 0; t < p.length; t++) p[t].update(e, u);
-      this._envWin(e, n, r);
+      if (r && r.mtWorldStyle === `voxel`) {
+        // (voxel world) towers, inhibitors, Nexus and base decor are drawn by game/mt/voxel/structures.js; this system
+        // keeps its sim-facing parts (anchors, range ring, particles) and hides its meshes
+        for (let e of this.views.values()) {
+          e.group.visible = !1;
+          // the voxel silhouettes are taller: lift the overhead (HP bar) anchor to them, once per view
+          if (!e._vxA && r.mtVoxelAnchors) {
+            let A = r.mtVoxelAnchors[e.kind === `tower` ? `tower` : e.kind === `inhibitor` ? `inhibitor` : `nexus`];
+            A && (e.meta = { ...e.meta, ...A(e.tier || 1) });
+            e._vxA = 1;
+          }
+        }
+        for (let e of p) e.group.visible = !1;
+        this.decals.mesh.visible = !1;
+      } else this._envWin(e, n, r);
       let m = this.ctx.registry,
         h = m && m.get ? m.get(`hud`) : null,
         g = this.ctx.renderer ? this.ctx.renderer.domElement : null;

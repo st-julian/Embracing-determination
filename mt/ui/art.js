@@ -3,6 +3,7 @@
 // + `image-rendering: pixelated`. Expensive renders (animated portraits, showcases) go through a small
 // per-frame job queue so a burst of requests never stalls a frame.
 
+import { voxelPortrait } from '../voxel/units/portraits.js';   // [voxel] baked voxel portraits (null until they exist)
 import {
   SPECIES_ART, renderPortrait, renderShowcase, renderIconCanvas, renderBadgeCanvas, renderElementIconCanvas,
 } from '../../art/sprites/index.js';
@@ -56,11 +57,13 @@ export const typeIcon = (type, size = 12) => memo('t|' + type + '|' + size, () =
 
 /** Static portrait (first idle frame), transparent background. */
 export function portrait(id, size = 48) {
+  const vp = voxelPortrait(id, size); if (vp) return vp;   // [voxel] voxel mode: the baked voxel portrait when there is one
   if (!SPECIES_ART[id]) return null;
   return memo('p|' + id + '|' + size, () => renderPortrait(id, { size, bg: false, margin: 4 }));
 }
 /** Animated idle portrait frames (queued). Returns {frames, fps} or null while rendering. */
 export function portraitAnim(id, size = 48) {
+  const va = voxelPortrait(id, size); if (va) return { frames: [va], fps: 1 };   // [voxel]
   const S = SPECIES_ART[id]; if (!S) return null;
   const A = S.anims.idle || { n: 1, fps: 6 };
   return queue('pa|' + id + '|' + size, () => {
@@ -71,6 +74,7 @@ export function portraitAnim(id, size = 48) {
 /** Head-and-shoulders crop (trainers) — the top part of a big portrait render. Works on the raw RGBA the art library
  *  returns (canvas:false): no getImageData readback (a GPU-canvas readback stalled the first frames — QA perf bug 7). */
 export function bust(id, size = 24) {
+  const vb = voxelPortrait(id, size, 'bust'); if (vb) return vb;   // [voxel]
   if (!SPECIES_ART[id]) return null;
   return memo('h|' + id + '|' + size, () => {
     const big = renderPortrait(id, { size: size * 2, bg: false, margin: 0, canvas: false });

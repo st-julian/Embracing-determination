@@ -8,6 +8,10 @@
 
 export const VOXEL_M = 1 / 10;     // characters, props, structures: 10 voxels per metre
 export const TERRAIN_M = 1 / 2;    // ground blocks: 0.5 m (5 prop voxels)
+// High-detail pass ("a voxel version of Black/White"): characters are modelled at CHAR_M (a trainer ~44 voxels tall,
+// the runtime scales each model to its gameplay size), props and structures at DETAIL_M, ground detail <= 1/8 m.
+export const CHAR_M = 1 / 25;
+export const DETAIL_M = 1 / 20;
 
 const FILLED = 1 << 24;
 
@@ -116,44 +120,79 @@ const FACES = [
  * opts.pivot  [x,y,z] in voxel units that lands on the origin (default: centre of x/z, bottom of y)
  * opts.ao     bake ambient occlusion (default true); opts.tint per-face tint (default true)
  * opts.solid  (x,y,z) => bool extra occupancy outside the grid (e.g. neighbouring terrain chunks) — culls and occludes
+ * opts.greedy merge coplanar neighbouring faces with the same colour and a uniform AO level into one quad
+ *             (default true; looks identical, far fewer triangles on flat colour areas)
  */
 export function meshArrays(model, opts = {}) {
-  const size = opts.size || VOXEL_M, ao = opts.ao !== false, tint = opts.tint !== false;
+  const size = opts.size || VOXEL_M, ao = opts.ao !== false, tint = opts.tint !== false, greedy = opts.greedy !== false;
   const piv = opts.pivot || [model.sx / 2, 0, model.sz / 2];
   const ext = opts.solid;
   const occ = (x, y, z) => model.filled(x, y, z) || (!!ext && !model.inside(x, y, z) && ext(x, y, z));
+  const dims = [model.sx, model.sy, model.sz];
   const P = [], N = [], C = [], I = [];
   let vert = 0;
-  for (let y = 0; y < model.sy; y++) for (let z = 0; z < model.sz; z++) for (let x = 0; x < model.sx; x++) {
-    const raw = model.v[model.idx(x, y, z)]; if (!raw) continue;
-    const r = LIN[(raw >> 16) & 255], g = LIN[(raw >> 8) & 255], b = LIN[raw & 255];
-    for (const f of FACES) {
-      const nx = f.n[0], ny = f.n[1], nz = f.n[2];
-      if (occ(x + nx, y + ny, z + nz)) continue;
-      const t = tint ? FACE_TINT[f.k] : 1;
-      const lv = [0, 0, 0, 0];
-      for (let i = 0; i < 4; i++) {
-        const cc = f.c[i];
-        let a = 1;
-        if (ao) {
-          // the two in-plane directions pointing from the face centre towards this corner, one layer outside the face
-          const ox = x + nx, oy = y + ny, oz = z + nz;
-          const dx = nx ? 0 : (cc[0] ? 1 : -1), dy = ny ? 0 : (cc[1] ? 1 : -1), dz = nz ? 0 : (cc[2] ? 1 : -1);
-          let s1, s2, cr;
-          if (nx) { s1 = occ(ox, oy + dy, oz); s2 = occ(ox, oy, oz + dz); cr = occ(ox, oy + dy, oz + dz); }
-          else if (ny) { s1 = occ(ox + dx, oy, oz); s2 = occ(ox, oy, oz + dz); cr = occ(ox + dx, oy, oz + dz); }
-          else { s1 = occ(ox + dx, oy, oz); s2 = occ(ox, oy + dy, oz); cr = occ(ox + dx, oy + dy, oz); }
-          const lvl = s1 && s2 ? 3 : (s1 ? 1 : 0) + (s2 ? 1 : 0) + (cr ? 1 : 0);
-          lv[i] = lvl; a = AO_CURVE[lvl];
-        }
-        P.push((x + cc[0] - piv[0]) * size, (y + cc[1] - piv[1]) * size, (z + cc[2] - piv[2]) * size);
-        N.push(nx, ny, nz);
-        C.push(r * a * t, g * a * t, b * a * t);
+  const lv = [0, 0, 0, 0], p = [0, 0, 0];
+  // AO levels of the 4 corners of voxel (x,y,z)'s face f into lv
+  const faceAO = (f, x, y, z) => {
+    const nx = f.n[0], ny = f.n[1], nz = f.n[2], ox = x + nx, oy = y + ny, oz = z + nz;
+    for (let i = 0; i < 4; i++) {
+      if (!ao) { lv[i] = 0; continue; }
+      const cc = f.c[i];
+      // the two in-plane directions pointing from the face centre towards this corner, one layer outside the face
+      const dx = nx ? 0 : (cc[0] ? 1 : -1), dy = ny ? 0 : (cc[1] ? 1 : -1), dz = nz ? 0 : (cc[2] ? 1 : -1);
+      let s1, s2, cr;
+      if (nx) { s1 = occ(ox, oy + dy, oz); s2 = occ(ox, oy, oz + dz); cr = occ(ox, oy + dy, oz + dz); }
+      else if (ny) { s1 = occ(ox + dx, oy, oz); s2 = occ(ox, oy, oz + dz); cr = occ(ox + dx, oy, oz + dz); }
+      else { s1 = occ(ox + dx, oy, oz); s2 = occ(ox, oy + dy, oz); cr = occ(ox + dx, oy + dy, oz); }
+      lv[i] = s1 && s2 ? 3 : (s1 ? 1 : 0) + (s2 ? 1 : 0) + (cr ? 1 : 0);
+    }
+  };
+  // one quad: min voxel corner (x,y,z), extent w along axis ua and h along axis va (1x1 = a single face)
+  const emit = (f, ua, va, x, y, z, w, h, col) => {
+    const t = tint ? FACE_TINT[f.k] : 1;
+    const r = LIN[(col >> 16) & 255] * t, g = LIN[(col >> 8) & 255] * t, b = LIN[col & 255] * t;
+    for (let i = 0; i < 4; i++) {
+      const cc = f.c[i]; p[0] = x; p[1] = y; p[2] = z;
+      for (let a = 0; a < 3; a++) p[a] += cc[a] * (a === ua ? w : a === va ? h : 1);
+      P.push((p[0] - piv[0]) * size, (p[1] - piv[1]) * size, (p[2] - piv[2]) * size);
+      N.push(f.n[0], f.n[1], f.n[2]);
+      const a = AO_CURVE[lv[i]];
+      C.push(r * a, g * a, b * a);
+    }
+    // flip the quad diagonal so AO interpolates without the anisotropy crease
+    if (lv[0] + lv[2] > lv[1] + lv[3]) I.push(vert + 1, vert + 2, vert + 3, vert + 1, vert + 3, vert);
+    else I.push(vert, vert + 1, vert + 2, vert, vert + 2, vert + 3);
+    vert += 4;
+  };
+  const xyz = [0, 0, 0];
+  for (const f of FACES) {
+    const na = f.n[0] ? 0 : f.n[1] ? 1 : 2, ua = (na + 1) % 3, va = (na + 2) % 3;
+    const W = dims[ua], H = dims[va];
+    const mask = new Float64Array(W * H);   // 0 = nothing to merge; else 1 + colour * 4 + uniform AO level
+    for (let k = 0; k < dims[na]; k++) {
+      mask.fill(0);
+      for (let v = 0; v < H; v++) for (let u = 0; u < W; u++) {
+        xyz[na] = k; xyz[ua] = u; xyz[va] = v;
+        const x = xyz[0], y = xyz[1], z = xyz[2];
+        const raw = model.v[model.idx(x, y, z)]; if (!raw) continue;
+        if (occ(x + f.n[0], y + f.n[1], z + f.n[2])) continue;
+        faceAO(f, x, y, z);
+        const col = raw & 0xffffff;
+        if (greedy && lv[0] === lv[1] && lv[1] === lv[2] && lv[2] === lv[3]) mask[v * W + u] = 1 + col * 4 + lv[0];
+        else emit(f, ua, va, x, y, z, 1, 1, col);
       }
-      // flip the quad diagonal so AO interpolates without the anisotropy crease
-      if (lv[0] + lv[2] > lv[1] + lv[3]) I.push(vert + 1, vert + 2, vert + 3, vert + 1, vert + 3, vert);
-      else I.push(vert, vert + 1, vert + 2, vert, vert + 2, vert + 3);
-      vert += 4;
+      // greedy rectangles over faces with the same colour and the same uniform AO level
+      for (let v = 0; v < H; v++) for (let u = 0; u < W;) {
+        const key = mask[v * W + u]; if (!key) { u++; continue; }
+        let w = 1; while (u + w < W && mask[v * W + u + w] === key) w++;
+        let h = 1;
+        grow: for (; v + h < H; h++) for (let i = 0; i < w; i++) if (mask[(v + h) * W + u + i] !== key) break grow;
+        for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) mask[(v + j) * W + u + i] = 0;
+        const l = (key - 1) % 4; lv[0] = lv[1] = lv[2] = lv[3] = l;
+        xyz[na] = k; xyz[ua] = u; xyz[va] = v;
+        emit(f, ua, va, xyz[0], xyz[1], xyz[2], w, h, (key - 1 - l) / 4);
+        u += w;
+      }
     }
   }
   return {

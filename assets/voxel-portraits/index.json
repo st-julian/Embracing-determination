@@ -1,0 +1,357 @@
+{
+ "generated": "tools/voxel-render.mjs portraits",
+ "sizes": [
+  128,
+  256
+ ],
+ "camera": {
+  "az": -30,
+  "el": 12
+ },
+ "note": "head-and-shoulders, transparent, 3/4 front; keys: form id | minion_<kind>_<team> | boss_galeclaw | trainer_<spec>_<team>_v<look>",
+ "portraits": {
+  "cindle": {
+   "128": "cindle_128.png",
+   "256": "cindle_256.png",
+   "id": "cindle",
+   "team": null,
+   "variant": 0
+  },
+  "pyrovix": {
+   "128": "pyrovix_128.png",
+   "256": "pyrovix_256.png",
+   "id": "pyrovix",
+   "team": null,
+   "variant": 0
+  },
+  "infernyx": {
+   "128": "infernyx_128.png",
+   "256": "infernyx_256.png",
+   "id": "infernyx",
+   "team": null,
+   "variant": 0
+  },
+  "puddlet": {
+   "128": "puddlet_128.png",
+   "256": "puddlet_256.png",
+   "id": "puddlet",
+   "team": null,
+   "variant": 0
+  },
+  "tidalon": {
+   "128": "tidalon_128.png",
+   "256": "tidalon_256.png",
+   "id": "tidalon",
+   "team": null,
+   "variant": 0
+  },
+  "abyssaur": {
+   "128": "abyssaur_128.png",
+   "256": "abyssaur_256.png",
+   "id": "abyssaur",
+   "team": null,
+   "variant": 0
+  },
+  "sproutle": {
+   "128": "sproutle_128.png",
+   "256": "sproutle_256.png",
+   "id": "sproutle",
+   "team": null,
+   "variant": 0
+  },
+  "fernhorn": {
+   "128": "fernhorn_128.png",
+   "256": "fernhorn_256.png",
+   "id": "fernhorn",
+   "team": null,
+   "variant": 0
+  },
+  "verdantusk": {
+   "128": "verdantusk_128.png",
+   "256": "verdantusk_256.png",
+   "id": "verdantusk",
+   "team": null,
+   "variant": 0
+  },
+  "sparkit": {
+   "128": "sparkit_128.png",
+   "256": "sparkit_256.png",
+   "id": "sparkit",
+   "team": null,
+   "variant": 0
+  },
+  "voltail": {
+   "128": "voltail_128.png",
+   "256": "voltail_256.png",
+   "id": "voltail",
+   "team": null,
+   "variant": 0
+  },
+  "thundrix": {
+   "128": "thundrix_128.png",
+   "256": "thundrix_256.png",
+   "id": "thundrix",
+   "team": null,
+   "variant": 0
+  },
+  "pebbit": {
+   "128": "pebbit_128.png",
+   "256": "pebbit_256.png",
+   "id": "pebbit",
+   "team": null,
+   "variant": 0
+  },
+  "bouldash": {
+   "128": "bouldash_128.png",
+   "256": "bouldash_256.png",
+   "id": "bouldash",
+   "team": null,
+   "variant": 0
+  },
+  "terracore": {
+   "128": "terracore_128.png",
+   "256": "terracore_256.png",
+   "id": "terracore",
+   "team": null,
+   "variant": 0
+  },
+  "zephlet": {
+   "128": "zephlet_128.png",
+   "256": "zephlet_256.png",
+   "id": "zephlet",
+   "team": null,
+   "variant": 0
+  },
+  "galeon": {
+   "128": "galeon_128.png",
+   "256": "galeon_256.png",
+   "id": "galeon",
+   "team": null,
+   "variant": 0
+  },
+  "tempestral": {
+   "128": "tempestral_128.png",
+   "256": "tempestral_256.png",
+   "id": "tempestral",
+   "team": null,
+   "variant": 0
+  },
+  "minion_grubling_blue": {
+   "128": "minion_grubling_blue_128.png",
+   "256": "minion_grubling_blue_256.png",
+   "id": "minion_grubling",
+   "team": "blue",
+   "variant": 0
+  },
+  "minion_grubling_red": {
+   "128": "minion_grubling_red_128.png",
+   "256": "minion_grubling_red_256.png",
+   "id": "minion_grubling",
+   "team": "red",
+   "variant": 0
+  },
+  "minion_spitwing_blue": {
+   "128": "minion_spitwing_blue_128.png",
+   "256": "minion_spitwing_blue_256.png",
+   "id": "minion_spitwing",
+   "team": "blue",
+   "variant": 0
+  },
+  "minion_spitwing_red": {
+   "128": "minion_spitwing_red_128.png",
+   "256": "minion_spitwing_red_256.png",
+   "id": "minion_spitwing",
+   "team": "red",
+   "variant": 0
+  },
+  "minion_shellram_blue": {
+   "128": "minion_shellram_blue_128.png",
+   "256": "minion_shellram_blue_256.png",
+   "id": "minion_shellram",
+   "team": "blue",
+   "variant": 0
+  },
+  "minion_shellram_red": {
+   "128": "minion_shellram_red_128.png",
+   "256": "minion_shellram_red_256.png",
+   "id": "minion_shellram",
+   "team": "red",
+   "variant": 0
+  },
+  "boss_galeclaw": {
+   "128": "boss_galeclaw_128.png",
+   "256": "boss_galeclaw_256.png",
+   "id": "boss_galeclaw",
+   "team": null,
+   "variant": 0
+  },
+  "trainer_attack_blue_v0": {
+   "128": "trainer_attack_blue_v0_128.png",
+   "256": "trainer_attack_blue_v0_256.png",
+   "id": "trainer_attack",
+   "team": "blue",
+   "variant": 0
+  },
+  "trainer_attack_blue_v1": {
+   "128": "trainer_attack_blue_v1_128.png",
+   "256": "trainer_attack_blue_v1_256.png",
+   "id": "trainer_attack",
+   "team": "blue",
+   "variant": 1
+  },
+  "trainer_attack_blue_v2": {
+   "128": "trainer_attack_blue_v2_128.png",
+   "256": "trainer_attack_blue_v2_256.png",
+   "id": "trainer_attack",
+   "team": "blue",
+   "variant": 2
+  },
+  "trainer_attack_blue_v3": {
+   "128": "trainer_attack_blue_v3_128.png",
+   "256": "trainer_attack_blue_v3_256.png",
+   "id": "trainer_attack",
+   "team": "blue",
+   "variant": 3
+  },
+  "trainer_attack_red_v0": {
+   "128": "trainer_attack_red_v0_128.png",
+   "256": "trainer_attack_red_v0_256.png",
+   "id": "trainer_attack",
+   "team": "red",
+   "variant": 0
+  },
+  "trainer_attack_red_v1": {
+   "128": "trainer_attack_red_v1_128.png",
+   "256": "trainer_attack_red_v1_256.png",
+   "id": "trainer_attack",
+   "team": "red",
+   "variant": 1
+  },
+  "trainer_attack_red_v2": {
+   "128": "trainer_attack_red_v2_128.png",
+   "256": "trainer_attack_red_v2_256.png",
+   "id": "trainer_attack",
+   "team": "red",
+   "variant": 2
+  },
+  "trainer_attack_red_v3": {
+   "128": "trainer_attack_red_v3_128.png",
+   "256": "trainer_attack_red_v3_256.png",
+   "id": "trainer_attack",
+   "team": "red",
+   "variant": 3
+  },
+  "trainer_healing_blue_v0": {
+   "128": "trainer_healing_blue_v0_128.png",
+   "256": "trainer_healing_blue_v0_256.png",
+   "id": "trainer_healing",
+   "team": "blue",
+   "variant": 0
+  },
+  "trainer_healing_blue_v1": {
+   "128": "trainer_healing_blue_v1_128.png",
+   "256": "trainer_healing_blue_v1_256.png",
+   "id": "trainer_healing",
+   "team": "blue",
+   "variant": 1
+  },
+  "trainer_healing_blue_v2": {
+   "128": "trainer_healing_blue_v2_128.png",
+   "256": "trainer_healing_blue_v2_256.png",
+   "id": "trainer_healing",
+   "team": "blue",
+   "variant": 2
+  },
+  "trainer_healing_blue_v3": {
+   "128": "trainer_healing_blue_v3_128.png",
+   "256": "trainer_healing_blue_v3_256.png",
+   "id": "trainer_healing",
+   "team": "blue",
+   "variant": 3
+  },
+  "trainer_healing_red_v0": {
+   "128": "trainer_healing_red_v0_128.png",
+   "256": "trainer_healing_red_v0_256.png",
+   "id": "trainer_healing",
+   "team": "red",
+   "variant": 0
+  },
+  "trainer_healing_red_v1": {
+   "128": "trainer_healing_red_v1_128.png",
+   "256": "trainer_healing_red_v1_256.png",
+   "id": "trainer_healing",
+   "team": "red",
+   "variant": 1
+  },
+  "trainer_healing_red_v2": {
+   "128": "trainer_healing_red_v2_128.png",
+   "256": "trainer_healing_red_v2_256.png",
+   "id": "trainer_healing",
+   "team": "red",
+   "variant": 2
+  },
+  "trainer_healing_red_v3": {
+   "128": "trainer_healing_red_v3_128.png",
+   "256": "trainer_healing_red_v3_256.png",
+   "id": "trainer_healing",
+   "team": "red",
+   "variant": 3
+  },
+  "trainer_magic_blue_v0": {
+   "128": "trainer_magic_blue_v0_128.png",
+   "256": "trainer_magic_blue_v0_256.png",
+   "id": "trainer_magic",
+   "team": "blue",
+   "variant": 0
+  },
+  "trainer_magic_blue_v1": {
+   "128": "trainer_magic_blue_v1_128.png",
+   "256": "trainer_magic_blue_v1_256.png",
+   "id": "trainer_magic",
+   "team": "blue",
+   "variant": 1
+  },
+  "trainer_magic_blue_v2": {
+   "128": "trainer_magic_blue_v2_128.png",
+   "256": "trainer_magic_blue_v2_256.png",
+   "id": "trainer_magic",
+   "team": "blue",
+   "variant": 2
+  },
+  "trainer_magic_blue_v3": {
+   "128": "trainer_magic_blue_v3_128.png",
+   "256": "trainer_magic_blue_v3_256.png",
+   "id": "trainer_magic",
+   "team": "blue",
+   "variant": 3
+  },
+  "trainer_magic_red_v0": {
+   "128": "trainer_magic_red_v0_128.png",
+   "256": "trainer_magic_red_v0_256.png",
+   "id": "trainer_magic",
+   "team": "red",
+   "variant": 0
+  },
+  "trainer_magic_red_v1": {
+   "128": "trainer_magic_red_v1_128.png",
+   "256": "trainer_magic_red_v1_256.png",
+   "id": "trainer_magic",
+   "team": "red",
+   "variant": 1
+  },
+  "trainer_magic_red_v2": {
+   "128": "trainer_magic_red_v2_128.png",
+   "256": "trainer_magic_red_v2_256.png",
+   "id": "trainer_magic",
+   "team": "red",
+   "variant": 2
+  },
+  "trainer_magic_red_v3": {
+   "128": "trainer_magic_red_v3_128.png",
+   "256": "trainer_magic_red_v3_256.png",
+   "id": "trainer_magic",
+   "team": "red",
+   "variant": 3
+  }
+ }
+}

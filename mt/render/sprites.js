@@ -23,6 +23,7 @@ import { o as heightAt, a as WATER_Y } from '../../assets/height-CVtQdZ3e.js';
 import { E as DT, D as KIND } from '../../assets/map-oE9sOnNc.js';
 import { SPECIES_ART, renderSpriteData, spritePalette } from '../../art/sprites/index.js';
 import { MT_EVENT as E } from '../sim/events.js';
+import { VoxelUnits, voxelStyle } from '../voxel/units/index.js';   // [voxel] units as animated voxel models (?world=voxel)
 
 export const PPM = 32;                 // art pixels per world metre — shared with the world pixel grid (app.mtPixel.ppm)
 export const ART_SCALE = 1.25;         // rig rasterised at 1.25x the authored size (real extra detail, not upscaled)
@@ -681,6 +682,7 @@ export class SpriteSystem {
   idlePump(deadline) {
     this.idleId = 0;
     if (this.disposed) return;
+    if (voxelStyle(typeof window !== 'undefined' ? window.__moba : null)) return;   // [voxel] no sprite baking for voxel units
     if (!this.densReady) this.predictDensity();
     if (this.densReady && this.bw) { this.drainWorker(); this.feedWorker(); }
     else if (this.densReady) {
@@ -947,6 +949,10 @@ export class SpriteSystem {
     const locals = app && app.locals ? app.locals : null;
     this.updateCamera(app);
     this.updateLights(app);
+    // [voxel] voxel world style: every unit below is handed to the voxel runtime instead of a sprite quad (marks, fog,
+    // wading, x-ray test, flashes and fx overrides stay here); capture orbs stay sprites
+    const VX = voxelStyle(app);
+    if (VX) { if (!this.voxel) { this.voxel = new VoxelUnits(this.ctx); this.voxel.palette = spritePalette; this.voxel.heightAt = heightAt; this.voxel.viewport = this.uniforms.uViewport.value; } this.voxel.begin(f, now); } else if (this.voxel) this.voxel.hide();
     this.uniforms.uTime.value = now;
     // env material tag (scene alpha 0.75 = sprite pixel: own outline, no depth-reconstructed fog / aerial haze); the env
     // post chain publishes app.mtSceneTags in both modes (pixel grid + HD)
@@ -1024,7 +1030,8 @@ export class SpriteSystem {
         xa = this.debugXray ? 1 : v.xa;   // debugXray: tests / screenshots of the indicator style
       }
       const cloud = cloudAt ? Math.max(0, Math.min(1, cloudAt(x, z) || 0)) : 0;
-      const F = this.pushSprite(id, view, anim, fi, x, gy, z, { flip, flash, dis, scale, tint, team, rs, cloud, wl, dv, seed: seed * 6.28, xa });
+      const F = VX ? this.voxel.unit(u, { x, gy, z, teamName: u.team === 2 ? 'wild' : teamName(u.team), flash, dis, scale, tint, dv, xa, v, S, artId: id })   // [voxel]
+        : this.pushSprite(id, view, anim, fi, x, gy, z, { flip, flash, dis, scale, tint, team, rs, cloud, wl, dv, seed: seed * 6.28, xa });
       if (!F || id === 'orb') continue;
       // ground marks (art px on the sprite's own grid)
       const fade = (1 - dis) * (u.alive ? 1 : 0.5);
@@ -1032,7 +1039,7 @@ export class SpriteSystem {
       const cc = team === 4 ? this.colors.wild : team === 1 ? this.colors.self : team === 2 ? this.colors.ally : this.colors.enemy;
       if (!wet) this.pushMark(x, gy, z, 0, 0, 0, rx, ry, SH, 0.5 * fade * (S.hover >= 5 ? 0.7 : 1));
       if (wet) {
-        const span = wl > 0 ? this.waterSpan(F, wl, flip) : null;
+        const span = wl > 0 && !F.voxel ? this.waterSpan(F, wl, flip) : null;
         const fx = span ? span[0] : 0, frx = span ? Math.max(3, Math.round(span[1] + 1.5)) : rx, fry = Math.max(2, Math.round(frx * MARK_RATIO));
         const mov = u.moving ? 1.9 : 1.1;
         for (const half of [1, 2]) {
@@ -1054,16 +1061,19 @@ export class SpriteSystem {
       const gy = heightAt(p.x, p.y);
       const d0 = Math.hypot((p.tx ?? p.x) - (p.sx ?? p.x), (p.ty ?? p.y) - (p.sy ?? p.y)) || 1;
       const lift = 0.6 + 0.8 * Math.sin(Math.PI * Math.min(1, Math.max(0, 1 - Math.hypot((p.tx ?? p.x) - p.x, (p.ty ?? p.y) - p.y) / d0)));
-      this.pushSprite('orb', 'front', 'idle', Math.floor(now * 10) % 4, p.x, gy + lift, p.y);
+      if (VX) this.voxel.orbAt(p.x, gy + lift, p.y, now * 9);   // [voxel]
+      else this.pushSprite('orb', 'front', 'idle', Math.floor(now * 10) % 4, p.x, gy + lift, p.y);
     }
     this.transients = this.transients.filter((t) => now - t.t0 < t.dur);
     for (const t of this.transients) {
+      if (VX) { if (!t.vox) { t.vox = true; this.voxel.burst(t.anim === 'sparkle' ? 'success' : 'fail', t.x, Math.max(WATER_Y, heightAt(t.x, t.z)), t.z); } continue; }   // [voxel]
       const n = SPECIES_ART.orb.anims[t.anim].n;
       this.pushSprite('orb', 'front', t.anim, Math.min(n - 1, Math.floor((now - t.t0) / t.dur * n)), t.x, Math.max(WATER_Y, heightAt(t.x, t.z)), t.z);
     }
     for (const [id, v] of this.views) if (v.seen !== fno) this.views.delete(id);
+    if (VX) this.voxel.end();   // [voxel]
     this.sprites.end(); this.marks.end();
-    this.pump(2);           // background prewarm (on-screen ids first, then evolutions, other teams...)
+    if (!VX) this.pump(2);  // background prewarm (on-screen ids first, then evolutions, other teams...); [voxel] none: units are voxel models
     this.atlas.flush(this.atlas.noCopy ? null : this.ctx.renderer);
   }
 
@@ -1072,6 +1082,7 @@ export class SpriteSystem {
     if (this.bw) { try { this.bw.terminate(); } catch (e) { /* gone */ } this.bw = null; }
     if (this.idleId) { if (typeof cancelIdleCallback === 'function') cancelIdleCallback(this.idleId); clearTimeout(this.idleId); this.idleId = 0; }
     this.sprites.dispose(); this.marks.dispose();
+    if (this.voxel) this.voxel.dispose();   // [voxel]
     for (const p of this.atlas.pages) p.tex.dispose();
     this.palTex.dispose(); this.ctx.scene.remove(this.group);
   }

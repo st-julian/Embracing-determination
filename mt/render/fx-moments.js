@@ -26,7 +26,7 @@ export class CaptureFx {
   start(ev) {
     const fx = this.fx, id = ev.target, u = fx.unit(id);
     const x = ev.x, z = ev.y, gy = fx.gy(x, z);
-    const h = u ? u.height || 1 : (FORMS[ev.form] && FORMS[ev.form].height) || 1;
+    const h = u ? (fx.voxTop && fx.voxTop(u)) || u.height || 1 : (FORMS[ev.form] && FORMS[ev.form].height) || 1;   // [voxel] model top
     const C = { id, x, z, gy, form: ev.form, h, t: 0, phase: 'absorb', wob: -1, wobN: 0, done: false, flash: 0 };
     this.caps.set(id, C);
     const top = gy + Math.max(1.1, h * 0.9);
