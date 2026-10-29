@@ -286,21 +286,31 @@ export function usePotion(mt, trainer) {
 }
 
 export function trainerSkill(mt, trainer) {
-  const T = trainer.mtTrainer, w = mt.world, L = mt.L;
+  const T = trainer.mtTrainer, w = mt.world;
   if (!trainer.alive) return deny(mt, trainer, 'dead', t('deny.dead'));
   if (w.time < T.cdEnd.skill) return deny(mt, trainer, 'cooldown', t('deny.skillCd'));
   const pet = monsters.activeUnit(mt, trainer);
   if (!pet || !pet.alive) return deny(mt, trainer, 'no_monster', t('deny.noMonster'));
-  const spec = SPECS[T.spec];
+  const duration = specSkillEffect(mt, trainer, pet, T.spec);
+  T.cdEnd.skill = w.time + SPEC_SKILL_CD;
+  mt.stats.trainerSkills++;
+  mt.emit(mt.E.TRAINER_SKILL, { trainer: trainer.id, skill: SPECS[T.spec].skill.toLowerCase(), unit: pet.id, duration, x: pet.x, y: pet.y });
+  return true;
+}
+
+/** The Rally / Mend / Surge effect on `pet` (also the rally / mend / surge CARDS, mt/sim/cards.js). Returns its duration. */
+export function specSkillEffect(mt, trainer, pet, specId) {
+  const T = trainer.mtTrainer, w = mt.world, L = mt.L;
+  const spec = SPECS[specId];
   const status = (tgt, st, dur, power) => w.emit(mt.E.STATUS, { tgt: tgt.id, src: trainer.id, status: st, ability: spec.skill.toLowerCase(), duration: dur, power, x: tgt.x, y: tgt.y });
-  const fx = (kind, tgt, extra) => w.emit(mt.EVENT.FX, { fx: 'mt_' + spec.skill.toLowerCase(), kind, src: trainer.id, tgt: tgt.id, team: trainer.team, element: T.spec === 'attack' ? 'fire' : T.spec === 'healing' ? 'nature' : 'arcane', x: tgt.x, y: tgt.y, ...extra });
+  const fx = (kind, tgt, extra) => w.emit(mt.EVENT.FX, { fx: 'mt_' + spec.skill.toLowerCase(), kind, src: trainer.id, tgt: tgt.id, team: trainer.team, element: specId === 'attack' ? 'fire' : specId === 'healing' ? 'nature' : 'arcane', x: tgt.x, y: tgt.y, ...extra });
   let duration = 0;
-  if (T.spec === 'attack') {
+  if (specId === 'attack') {
     // Rally: active monster +35 % attack speed, +15 % move speed for 5 s
     duration = spec.rally.duration;
     L.addBuff(w, pet, 'mt_rally', duration, { attackSpeedPct: spec.rally.attackSpeedPct, msPct: spec.rally.msPct });
     status(pet, 'buff', duration, 'mt_rally'); fx('buff', pet, { duration });
-  } else if (T.spec === 'healing') {
+  } else if (specId === 'healing') {
     // Mend: heal monster 28 % + trainer 20 %, cleanse slows
     const a = L.heal(w, pet, pet.maxHp * spec.mend.monsterHealPct, false, trainer);
     const b = L.heal(w, trainer, trainer.maxHp * spec.mend.trainerHealPct, false, trainer);
@@ -317,8 +327,6 @@ export function trainerSkill(mt, trainer) {
     L.addBuff(w, pet, 'mt_surge', duration, null, { surge: true, bonus: spec.surge.bonus });
     status(pet, 'surge', duration, spec.surge.bonus); fx('empower', pet, { duration });
   }
-  T.cdEnd.skill = w.time + SPEC_SKILL_CD;
-  mt.stats.trainerSkills++;
-  mt.emit(mt.E.TRAINER_SKILL, { trainer: trainer.id, skill: spec.skill.toLowerCase(), unit: pet.id, duration, x: pet.x, y: pet.y });
-  return true;
+  void T;
+  return duration;
 }

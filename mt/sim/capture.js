@@ -92,7 +92,9 @@ export function captureChance(u, now, bonus = 0) {
 /** HUD-friendly band for a chance. */
 export function chanceBand(p) { return p >= 0.6 ? 'great' : p >= 0.35 ? 'good' : 'ok'; }
 
-function bonusOf(mt, trainer) { return mt.rules && mt.rules.captureBonus ? mt.rules.captureBonus(trainer) : 0; }
+function bonusOf(mt, trainer) {
+  return (mt.rules && mt.rules.captureBonus ? mt.rules.captureBonus(trainer) : 0) + (mt.cards ? mt.cards.catchBonus(trainer) : 0);   // + the lure card
+}
 
 function deny(mt, trainer, code, text) { mt.emit(mt.E.DENY, { trainer: trainer.id, code, text }); return false; }
 
@@ -191,6 +193,7 @@ function absorb(mt, trainer, u) {
   const w = mt.world;
   if (!isCapturable(u)) { miss(mt, trainer, u ? u.id : -1, u ? u.x : trainer.x, u ? u.y : trainer.y); return; }
   const p = captureChance(u, w.time, bonusOf(mt, trainer));
+  if (mt.cards) mt.cards.consumeCatch(trainer);   // the lure card boosts one orb
   const M = u.mtMon;
   M.capturing = { trainer: trainer.id, team: trainer.team, p, phase: 'absorb', n: 0, t0: w.time, nextT: w.time + CAPTURE.absorbTime, x: u.x, y: u.y };
   u.mtCtl = true; u.invulnerable = true; u.untargetable = true; u.targetId = -1;

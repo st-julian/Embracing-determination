@@ -19,6 +19,7 @@ import * as combat from './combat.js';
 import * as minions from './minions.js';
 import * as structures from './structures.js';
 import * as jungle from './jungle.js';
+import * as cards from './cards.js';
 import * as debug from './debug.js';
 import { defaultRoster } from './roster.js';
 import * as trainerBot from '../ai/trainerBot.js';
@@ -27,6 +28,7 @@ import * as DATA_SPECIES from '../data/species.js';
 import * as DATA_ABILITIES from '../data/abilities.js';
 import * as DATA_BALANCE from '../data/balance.js';
 import * as DATA_OPTIONS from '../data/options.js';
+import * as DATA_CARDS from '../data/cards.js';
 import { guideFor } from './guide.js';
 import '../net/importmath-end.js'; // LAST: native Math again (see ../net/importmath.js)
 
@@ -96,7 +98,7 @@ export class MTWorld {
     this.nextRid = 1;
     this.net = null;               // online NetSession (mt/net/lockstep.js) while this world plays an online match
     // rules FIRST: match options (difficulty / mode / starters) are read by every other module (mt/sim/rules.js)
-    this.modules = [rules, trainers, monsters, capture, progression, combat, minions, structures, jungle, trainerBot, debug];
+    this.modules = [rules, trainers, monsters, capture, progression, combat, minions, structures, jungle, cards, trainerBot, debug];
     for (const m of this.modules) if (m.install) m.install(this);
   }
 
@@ -185,7 +187,7 @@ export function installMT(world, legacy) { return new MTWorld(world, legacy); }
 /** App-level namespace exposed as `window.__moba.mt` (see [MT-HOOK] app). */
 export const MT_NS = {
   version: 1,
-  data: { types: DATA_TYPES, species: DATA_SPECIES, abilities: DATA_ABILITIES, balance: DATA_BALANCE, options: DATA_OPTIONS },
+  data: { types: DATA_TYPES, species: DATA_SPECIES, abilities: DATA_ABILITIES, balance: DATA_BALANCE, options: DATA_OPTIONS, cards: DATA_CARDS },
   /** match options contract (mt/data/options.js): DEFAULT_OPTIONS, normalizeOptions, STARTERS ... */
   options: DATA_OPTIONS,
   /** objective guide for a trainer (mt/sim/guide.js); the app publishes it as `app.mtGuide(unitId?)` */

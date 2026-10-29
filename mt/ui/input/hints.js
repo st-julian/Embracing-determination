@@ -10,11 +10,11 @@
 //
 // CONTEXTUAL TIPS (after the card): a one-line bubble anchored to the real button when it first matters — ATTACK when
 // the first enemy comes close, ORB when a wild monster is weak enough, MOVE 1 once a monster fights, EVOLVE when ready,
-// POTION when the monster is low. Each tip at most 3 times per browser (localStorage 'mt.tips.v1'), one at a time,
+// POTION when the monster is low, the skill CARDS near the first fight, the base card panel at base. Each tip at most 3 times per browser (localStorage 'mt.tips.v1'), one at a time,
 // ≥ 40 s apart per tip, 5 s on screen; tapping the bubble (it never blocks a touch) or the button it points at hides it. Touch: above the button;
 // pad / keys: above the bottom HUD with the button glyph.
 
-import { t } from '../../i18n/index.js';
+import { t, has } from '../../i18n/index.js';
 import * as art from '../art.js';
 import { BTN, readPads } from './devices.js';
 import { isCapturable } from '../../sim/capture.js';
@@ -91,8 +91,12 @@ function g(fam, b) {
   return `<span class="g">${SH[fam === 'xbox' ? 'xbox' : 'ps'][b] || b}</span>`;
 }
 /** tip -> [touch button, pad button, key] */
-const TIP_BTN = { attack: ['attack', BTN.CROSS, 'Space'], orb: ['capture', BTN.CIRCLE, 'E'], a1: ['a1', BTN.SQUARE, 'Q'], evolve: ['evolve', BTN.UP, 'T'], potion: ['potion', BTN.L2, 'D'] };
-const TIP_ORDER = ['evolve', 'orb', 'potion', 'a1', 'attack'];
+const TIP_BTN = { attack: ['attack', BTN.CROSS, 'Space'], orb: ['capture', BTN.CIRCLE, 'E'], a1: ['a1', BTN.SQUARE, 'Q'], evolve: ['evolve', BTN.UP, 'T'], potion: ['potion', BTN.L2, 'D'],
+  // skill cards (skillcards.js): anchored to the card bar / its base 「カード」 button in every input family
+  cards: ['#mt-cards .mt-cd:not(.poor):not(.empty)', BTN.R1, '1-5'], base: ['#mt-cards .open', BTN.R1, 'K'] };
+const TIP_ORDER = ['evolve', 'orb', 'potion', 'cards', 'a1', 'attack', 'base'];
+/** the element a tip points at: a CSS selector, or a touch-cluster button name */
+const anchorEl = (tb) => document.querySelector(tb.startsWith('#') ? tb : `#mt-touch .tb[data-tb="${tb}"]`);
 
 export class FirstMatchHints {
   constructor(ctx, locals) {
@@ -111,7 +115,7 @@ export class FirstMatchHints {
       if (!this.tip) return;
       const r = this.tipEl.getBoundingClientRect();
       if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) { this.hideTip(); return; }
-      const b = e.target && e.target.closest && e.target.closest('#mt-touch .tb'); if (b && TIP_BTN[this.tip.id][0] === b.dataset.tb) this.hideTip();
+      const tb = TIP_BTN[this.tip.id][0], b = e.target && e.target.closest && e.target.closest(tb.startsWith('#') ? tb : '#mt-touch .tb'); if (b && (tb.startsWith('#') || tb === b.dataset.tb)) this.hideTip();
     };
     addEventListener('pointerdown', this.onBtn, true);
     this.onKey = (e) => { if (this.open && e.isTrusted !== false) this.close(); };
@@ -204,6 +208,8 @@ export class FirstMatchHints {
       potion: () => !!pet && pet.alive && pet.hp < pet.maxHp * 0.35 && (T.cdEnd.potion || 0) <= now,
       a1: () => !!pet && pet.alive && !!rec && (rec.cds.a1 || 0) <= now && !!FORMS[rec.form] && enemyNear(8),
       attack: () => enemyNear(6.5),
+      cards: () => { const C = this.app.mtCardsUI, v = C && C.view(); return !!(v && v.on && !v.atBase && v.mana > 0 && (v.shown || []).some(Boolean) && enemyNear(9)); },
+      base: () => { const C = this.app.mtCardsUI, v = C && C.view(); return !!(v && v.on && v.atBase && !C.panelOpen); },
     };
     const c = this.counts();
     for (const id of TIP_ORDER) {
@@ -214,7 +220,7 @@ export class FirstMatchHints {
   }
   showTip(id) {
     const fam = this.family(), [tb, pb, key] = TIP_BTN[id];
-    const txt = fam === 'touch' ? t('tip3.' + id + '.touch') : t('tip3.' + id + '.pad', { g: fam === 'kbm' ? g('kbm', key) : g(fam, pb) });
+    const txt = fam === 'touch' ? t('tip3.' + id + '.touch') : fam === 'kbm' && has('tip3.' + id + '.kbm') ? t('tip3.' + id + '.kbm') : t('tip3.' + id + '.pad', { g: fam === 'kbm' ? g('kbm', key) : g(fam, pb) });
     this.tipEl.innerHTML = txt;
     this.tip = { id, t0: this.time, fam, tb };
     this.tipLast[id] = this.time; this.tipAny = this.time; this.bump(id);
@@ -229,11 +235,14 @@ export class FirstMatchHints {
     const tp = this.tip; if (!tp) return;
     const W = innerWidth, H = innerHeight, el = this.tipEl, bw = el.offsetWidth || 200, bh = el.offsetHeight || 40;
     let L = (W - bw) / 2, T = H * 0.72 - bh, ax = '50%', ay = '50%', side = false;
-    if (tp.fam === 'touch') {
-      const b = document.querySelector(`#mt-touch .tb[data-tb="${tp.tb}"]`);
-      const r = b && !b.classList.contains('hidden') ? b.getBoundingClientRect() : null;
+    if (tp.fam === 'touch' || tp.tb.startsWith('#')) {
+      const b = anchorEl(tp.tb);
+      let r = b && !b.classList.contains('hidden') ? b.getBoundingClientRect() : null;
+      // a card tip sits above the whole card bar (its mana gauge row too)
+      const meta = r && tp.tb.startsWith('#mt-cards') ? document.querySelector('#mt-cards .meta') : null, mr = meta && meta.getBoundingClientRect();
+      if (mr && mr.width > 0 && mr.top < r.top) r = { left: r.left, right: r.right, width: r.width, top: mr.top, bottom: r.bottom, height: r.bottom - mr.top };
       if (r && r.width > 0) {
-        const others = [...document.querySelectorAll('#mt-touch .tb')].filter((e) => e !== b && !e.classList.contains('hidden') && e.offsetParent !== null)
+        const others = [...document.querySelectorAll('#mt-touch .tb, #mt-cards.on .row .mt-cd, #mt-cards.on .open')].filter((e) => e !== b && !e.classList.contains('hidden') && e.offsetParent !== null)
           .map((e) => e.getBoundingClientRect()).filter((q) => q.width > 0);
         const hits = (l, t) => l < 4 || t < 4 || l + bw > W - 4 || t + bh > H - 4 || others.some((q) => l < q.right && l + bw > q.left && t < q.bottom && t + bh > q.top);
         const cx = r.left + r.width / 2, cy = r.top + r.height / 2;

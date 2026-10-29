@@ -25,6 +25,25 @@ import { hasAbility } from './combat.js';
 import { i as FOUNTAINS, a as LANES } from '../../assets/map-oE9sOnNc.js';
 import { guideFor } from './guide.js';
 import { CAPTURE_WINDOW } from '../data/options.js';
+import { CARDS, CARD_RULES } from '../data/cards.js';
+
+/**
+ * Play one shown card (mt/sim/cards.js) the way a player taps it: `pickIds` filters which card ids are wanted now;
+ * unit cards go on `tgt`, point cards on its position, others need no aim. Returns the card id played or null.
+ */
+function playCardOn(w, me, tgt, pickIds) {
+  const K = me.mtCards; if (!K || !K.hand.length || w.time < ((me.mtCardsSys && me.mtCardsSys.cdUntil) || 0)) return null;
+  for (let s = 0; s < Math.min(CARD_RULES.show, K.hand.length); s++) {
+    const id = K.hand[s], c = CARDS[id];
+    if (!c || c.cost > K.mana || (pickIds && !pickIds(id, c))) continue;
+    if ((c.target === 'unit' || c.target === 'point') && !tgt) continue;
+    if (c.target === 'unit' && (!tgt.mtMon && tgt.kind !== 'champion' && tgt.kind !== 'minion' || dist(me.x, me.y, tgt.x, tgt.y) > c.range)) continue;   // what the HUD would grey out
+    const cmd = c.target === 'unit' ? { type: 'card', slot: s, targetId: tgt.id } : c.target === 'point' ? { type: 'card', slot: s, x: tgt.x, y: tgt.y } : { type: 'card', slot: s };
+    return w.command(me.id, cmd) ? id : null;   // one tap per think
+  }
+  return null;
+}
+const DMG_CARDS = new Set(['bolt', 'blast', 'trap', 'meteor']), FIGHT_BUFFS = new Set(['power', 'rally', 'surge', 'shield']), HEAL_CARDS = new Set(['heal', 'mend']);
 
 const finite = Number.isFinite;
 
@@ -127,6 +146,7 @@ export function makeQA(mt, D) {
       mix(Math.round(u.x * 1000)); mix(Math.round(u.y * 1000)); mix(Math.round(u.hp * 100)); mix(u.level);
       if (u.mtMon) { mix(u.mtMon.form); mix(u.mtMon.ownerId); }
       if (u.mtTrainer) for (const r of u.mtTrainer.party) { mix(r.form); mix(r.level); mix(Math.round(r.xp * 100)); mix(r.fainted ? 1 : 0); }
+      if (u.mtCards) { const K = u.mtCards; mix(K.mana); mix(K.mulligans); mix(K.deck.length); mix(K.used.length); mix(K.hand.join(',')); }
     }
     for (const p of w.projectiles) { mix(p.id); mix(Math.round(p.x * 1000)); mix(Math.round(p.y * 1000)); }
     const s = mt.stats;
@@ -328,7 +348,7 @@ function startMasher(mt, me) {
   const w = mt.world;
   if (!me || !me.mtTrainer) throw new Error('qa.masher: not a trainer');
   me.bot = false;
-  const C = { deaths: 0, monKOs: 0, captures: 0, firstCatch: null, evolves: 0, firstEvolve: null, throws: 0, casts: 0, potions: 0, evolveCmds: 0, guide: {} };
+  const C = { deaths: 0, monKOs: 0, captures: 0, firstCatch: null, evolves: 0, firstEvolve: null, throws: 0, casts: 0, cards: 0, potions: 0, evolveCmds: 0, guide: {} };
   const cmd = (c) => w.command(me.id, c);
   const STRUCT = new Set([KIND.TOWER, KIND.INHIBITOR, KIND.NEXUS]);
   C.deathBy = {};
@@ -379,6 +399,7 @@ function startMasher(mt, me) {
         cmd({ type: 'dir', dx: 0, dy: 0 });
         if (!cmd({ type: 'monsterAttack', targetId: tg.id })) cmd({ type: 'attack', targetId: tg.id });   // touch ATTACK: the monster, else the sling
         if (rec && petUp) for (const s of ['a1', 'a2']) if ((rec.cds[s] || 0) <= w.time && hasAbility(rec, s) && cmd({ type: 'monsterCast', slot: s, targetId: tg.id, x: tg.x, y: tg.y })) { C.casts++; break; }
+        if (me.mtCards && tg.kind !== KIND.TOWER && tg.kind !== KIND.INHIBITOR && tg.kind !== KIND.NEXUS && playCardOn(w, me, tg, (k) => k !== 'ward' && k !== 'dash')) C.cards++;   // mash a card too
         if (petUp && pet.hp / pet.maxHp < 0.35 && w.time >= T.cdEnd.potion && cmd({ type: 'potion' })) C.potions++;
         return;
       }
@@ -392,7 +413,7 @@ function startMasher(mt, me) {
     });
   });
   C.report = () => ({ trainer: me.id, team: me.team, won: w.winner === null ? null : w.winner === me.team, time: +w.time.toFixed(1), deaths: C.deaths, deathBy: { ...C.deathBy }, kills: me.kills || 0, assists: me.assists || 0, monKOs: C.monKOs,
-    captures: C.captures, firstCatch: C.firstCatch, evolves: C.evolves, firstEvolve: C.firstEvolve, throws: C.throws, casts: C.casts, potions: C.potions,
+    captures: C.captures, firstCatch: C.firstCatch, evolves: C.evolves, firstEvolve: C.firstEvolve, throws: C.throws, casts: C.casts, cards: C.cards, potions: C.potions,
     guide: Object.fromEntries(Object.entries(C.guide).map(([k, v]) => [k, +v.toFixed(1)])), party: me.mtTrainer.party.map((r) => r.form + r.level).join('/') });
   return C;
 }
@@ -421,7 +442,7 @@ function startHuman(mt, D, me, opts = {}) {
   const team = me.team, enemy = 1 - team, fountain = FOUNTAINS[team];
   const C = {
     trainer: me.id, active: true, mode: null, stages: Object.fromEntries(STAGES.map((k) => [k, null])), timeline: [],
-    counters: { throws: 0, captures: 0, captureFails: 0, denies: 0, evolveCmds: 0, deaths: 0, retreats: 0, recalls: 0, fightDmg: 0, minionDmg: 0,
+    counters: { throws: 0, cards: 0, cardTrips: 0, captures: 0, captureFails: 0, denies: 0, evolveCmds: 0, deaths: 0, retreats: 0, recalls: 0, fightDmg: 0, minionDmg: 0,
       wildDmg: 0, structDmg: 0, enemyTowersDown: 0, ownTowersDown: 0, petKills: 0, potions: 0, skills: 0, casts: 0, maxLevel: 0 },
     petIds: new Set(), capTarget: -1, lastThink: -1, wasAlive: true, lastAction: '',
   };
@@ -454,6 +475,7 @@ function startHuman(mt, D, me, opts = {}) {
       if (e.type === 'mt_capture_success') C.counters.captures++;
       else if (e.type === 'mt_capture_fail') C.counters.captureFails++;
       else if (e.type === 'mt_deny') C.counters.denies++;
+      else if (e.type === 'mt_card_refill') C.refills = (C.refills || 0) + 1;
     }
   });
   mt.on('preTick', () => {
@@ -506,6 +528,18 @@ function startHuman(mt, D, me, opts = {}) {
     // --- retreat
     const petGone = T.party.length && (!pet || !pet.alive) && !(monsters.benchRecord(me) && !monsters.benchRecord(me).fainted);
     if (hpF < 0.3 || (petGone && foes.length && dF > 20)) { C.mode = 'heal'; C.counters.retreats++; moveTo(fountain.x, fountain.y, false); return; }
+    // --- cards at base: redraw the expensive / useless shown cards once per visit, keeping a charge (DESIGN §16)
+    if (me.mtCards && C.mullVisit !== (C.refills || 0) && w.mt.cards.view(me.id).atBase) {
+      C.mullVisit = C.refills || 0;
+      const K = me.mtCards, idx = [];
+      K.hand.slice(0, CARD_RULES.show).forEach((id, i) => { const c = CARDS[id]; if (c && (c.cost >= 4 || id === 'ward' || (id === 'lure' && T.party.length >= 2))) idx.push(i); });
+      if (idx.length && K.mulligans > 1 && cmd({ type: 'mulligan', idx })) C.counters.mulligans = (C.counters.mulligans || 0) + 1;
+    }
+    // --- cards: out of mana (or cards) and nothing around -> a base trip refills both (DESIGN §16)
+    const K = me.mtCards;
+    if (K && (K.mana < 2 || !K.hand.length) && !foes.length && dF > 40 && me.lastHitTime < t - 3 && !(pet && pet.lastHitTime > t - 3)) {
+      C.mode = 'heal'; C.counters.cardTrips = (C.counters.cardTrips || 0) + 1; moveTo(fountain.x, fountain.y, false); return;
+    }
     // --- 1. Capture (first monster)
     if (!T.party.length) { captureStep(); return; }
     // --- fainted active + healthy bench -> swap
@@ -529,7 +563,11 @@ function startHuman(mt, D, me, opts = {}) {
         if (!hasAbility(rec, slot) || t < (rec.cds[slot] || 0) || dist(pet.x, pet.y, f.x, f.y) > 8) continue;
         if (cmd({ type: 'monsterCast', slot, targetId: f.id, x: f.x, y: f.y })) { C.counters.casts++; break; }
       }
-      if (t >= T.cdEnd.skill && cmd({ type: 'trainerSkill' })) C.counters.skills++;
+      if (me.mtCards) {   // cards (match option): heal when low, else a damage card on the target, else a fight buff
+        const low = hpF < 0.5 || pet.hp / pet.maxHp < 0.45;
+        const id = (low && playCardOn(w, me, f, (k) => HEAL_CARDS.has(k))) || playCardOn(w, me, f, (k) => DMG_CARDS.has(k)) || playCardOn(w, me, f, (k) => FIGHT_BUFFS.has(k));
+        if (id) C.counters.cards = (C.counters.cards || 0) + 1;
+      } else if (t >= T.cdEnd.skill && cmd({ type: 'trainerSkill' })) C.counters.skills++;
       if (hpF > 0.5) cmd({ type: 'attack', targetId: f.id });
       else moveTo(me.x + (fountain.x - me.x) * 0.15, me.y + (fountain.y - me.y) * 0.15, false);
       return;

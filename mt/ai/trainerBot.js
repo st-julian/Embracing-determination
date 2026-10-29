@@ -27,6 +27,7 @@ import { dist, fountainOf, pointAtTeam, progressOf, ownSide, BOSS_PIT, nearestLa
 import { mult, formMult, dps, ehp, estimateFight, enemyTowerAt, lineValue, chanceAt, recordPower, TOWER_RANGE } from './assess.js';
 import { makeTeam, updateTeam, laneState, reportFight, bossUnit, activeLevel } from './team.js';
 import { BOT_SKILL } from '../data/options.js';
+import { cardActions } from './cardBot.js';
 
 const THINK = 15;   // 0.5 s at 30 Hz
 const MICRO = 3;
@@ -257,11 +258,14 @@ function actions(mt, u, b, c) {
     }
     if (why && cmd(mt, u, { type: 'swap' })) { ST.swaps++; b.lastSwapT = t; act(mt, b, 'SWAP: ' + why, cat); }
   }
+  // CARDS (match option `cards`, mt/sim/cards.js) replace the single trainer skill ------------------------------
+  if (mt.cards && mt.cards.on) cardActions(mt, u, b, c, cmd, act);
   if (!petOk) return;
   // POTION ----------------------------------------------------------------
   if (t >= T.cdEnd.potion && ((inCombat && hpP < 0.45) || hpP < 0.3)) {
     if (cmd(mt, u, { type: 'potion' })) { ST.potions++; act(mt, b, `POTION: ${pet.name} at ${Math.round(hpP * 100)} %`, 'potion'); }
   }
+  if (mt.cards && mt.cards.on) return;   // cards replace the single trainer skill (above)
   // TRAINER SKILL ---------------------------------------------------------
   if (t >= T.cdEnd.skill) {
     const foe = pet.targetId >= 0 ? c.w.units.get(pet.targetId) : null;
@@ -475,6 +479,9 @@ function scoreRecall(mt, u, b, c) {
   if (petLow) { need = Math.max(need, 0.7 + (0.3 - hpP)); why = `${c.pet.name} at ${Math.round(hpP * 100)} %, no healthy bench`; }
   const allDown = c.T.party.length && c.T.party.every((r) => r.fainted);
   if (allDown) { const back = Math.min(...c.T.party.map((r) => r.faintUntil)) - t; if (back > 12) { need = Math.max(need, 0.75); why = `whole party fainted (${back.toFixed(0)} s)`; } }
+  // cards (mt/sim/cards.js): out of mana / cards -> a base trip refills both (only when nothing else is going on)
+  const K = u.mtCards;
+  if (!need && K && (K.mana < 2 || !K.hand.length) && !c.inCombat && !c.fight.enemies.length) { need = 0.25; why = `out of ${K.hand.length ? 'mana' : 'cards'} (${K.mana} mana, ${K.hand.length} cards)`; }
   if (!need || distFountain < 30) return null;
   let minionsNear = 0;
   for (const e of c.w.queryUnits(u.x, u.y, 9, null, mt._aiScanR || (mt._aiScanR = []))) if (e.alive && e.team === 1 - u.team && (e.kind === 'minion' || e.kind === 'tower')) minionsNear++;

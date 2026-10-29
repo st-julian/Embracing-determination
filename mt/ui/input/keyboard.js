@@ -4,13 +4,15 @@
 // localPlayers.js) and sends legacy commands that mt translates for trainers (mt/sim/trainers.js routeCommand):
 //   RMB move / attack (the monster follows the trainer's target) · Space attack nearest · Q / W monster moves (aim + release)
 //   E capture at cursor · R trainer skill · D potion · F swap · B recall · 1 potion · Esc menu · arrow keys move.
+//   With skill CARDS on (match option, skillcards.js): 1–5 play the 5 shown cards (in WASD mode too), K = base card
+//   panel; R (trainer skill) is refused by the sim and 1 is no longer potion (D / X are).
 // This module listens in the capture phase (before the legacy listeners) and adds / changes:
 //   T evolve · G regroup · P (legacy shop) swallowed
 //   Tab            lock / cycle target near the cursor (the monster focuses it)   middle mouse  lock the unit under the cursor
 //   ` or Shift     hold: scoreboard
 //   WASD movement option (local.wasd, toggled in the lobby or with F1 in game; remembered in localStorage 'mt.input.wasd'):
 //     W A S D  move (camera-relative, via the legacy arrow-key path)     Q  monster ability 1     E  monster ability 2
-//     C  capture orb at cursor     X / 1  potion     (R, F, Space, B, T, G unchanged)
+//     C  capture orb at cursor     X / 1  potion (1 = card 1 with cards on)     (R, F, Space, B, T, G unchanged)
 // A real key press switches the screen's local to keycap glyphs (controller-first default; mouse clicks don't switch).
 
 import { t as i18n } from '../../i18n/index.js'; // i18n: F1 toast text (aliased: handlers use a local `t`)

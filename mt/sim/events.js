@@ -163,4 +163,15 @@ export const MT_EVENT = Object.freeze({
    * {trainer, team, kind, until?, victim?, target?, x, y}
    */
   ASSIST: 'mt_assist',
+  // ---- cards (gameplay, mt/sim/cards.js; data mt/data/cards.js; DESIGN §16) — only when match option `cards` is on
+  /** A card was played. {trainer, team, card (CARDS id), slot (0..4), cost, mana (left), x, y (aim point, or the trainer),
+   *  target (unit id or -1), delay? (s until a delayed card lands: trap / meteor), radius?} */
+  CARD_PLAY: 'mt_card_play',
+  /** Base visit (match start, respawn, recall arrival, walking in): mana full, hand back to 10. {trainer, team, reason:
+   *  'start'|'base', drawn, mana, reshuffled: bool} */
+  CARD_REFILL: 'mt_card_refill',
+  /** Redraw at base. {trainer, team, n (cards redrawn), left (charges left), idx: [hand indices]} */
+  MULLIGAN: 'mt_mulligan',
+  /** Redraw charge earned. {trainer, team, left, why: 'takedown'|'tower', mana} */
+  CARD_CHARGE: 'mt_card_charge',
 });

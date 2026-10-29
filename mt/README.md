@@ -214,8 +214,8 @@ Rules: docs/DESIGN.md §2 "Match options", §3 "Starter monster", §15 "Modes"; 
 ```js
 import { DEFAULT_OPTIONS, normalizeOptions, validateOptions, DIFFICULTY_IDS, MODE_IDS, STARTERS, STARTER_IDS, STARTER_LEVEL } from '/mt/data/options.js';
 // also: __moba.mt.options (same module)
-DEFAULT_OPTIONS                 // { difficulty: 'easy', mode: 'quick' }
-normalizeOptions(o)             // -> { difficulty, mode } (invalid / missing fields -> default; never throws)
+DEFAULT_OPTIONS                 // { difficulty: 'easy', mode: 'classic', cards: true }
+normalizeOptions(o)             // -> { difficulty, mode, cards } (invalid / missing fields -> default; never throws)
 validateOptions(o)              // -> { ok, options, errors[] }
 STARTERS                        // [{ id:'cindle'|'puddlet'|'sproutle', form, line, types, level, color, role, ranged, stats{hp,atk,def,mag,spd,as,range},
                                 //    evolvesTo[], strongVs, weakTo, name (localized getter), a1Name (localized getter) }]
@@ -246,6 +246,14 @@ lobbyRoster(slots)              // LobbySlot.starter is copied to the entry; def
   Event `mt_assist {trainer, team, kind, x, y, ...}` — kind `guard {until}` (respawn guard), `rescue {until}` (low-HP
   shield + haste), `potion` (the monster drank by itself), `credit {victim}` (a team-mate's kill credited to the human),
   `hold {target, until}` (capture window opened: my monster holds its attacks, throw now).
+* **Trainer cards** (DESIGN §16; data `mt/data/cards.js` CARDS / DECKS / CARD_RULES, sim `mt/sim/cards.js`, bots
+  `mt/ai/cardBot.js`; only with `options.cards`, default true): state `trainer.mtCards = {deck, hand, used, mana, manaMax,
+  mulligans}`; commands `{type:'card', slot:0..4, targetId?, x?, y?}`, `{type:'mulligan', idx:[hand indices]}` and
+  `{type:'cardMove', from, to}` (both base only); refusals `mt_deny` codes `no_mana | not_base | no_mulligan | bad_target |
+  cooldown` (+ `dead`, `cards_off`, and `cards_on` for the old trainer skill while cards are on); events `mt_card_play`,
+  `mt_card_refill`, `mt_mulligan`, `mt_card_charge` (payloads: mt/sim/events.js); view `app.mtCards(trainerId = app.playerId)`
+  → `{on, hand, shown, mana, manaMax, mulligans, atBase, deckLeft}` (cached per tick); strings `card.<id>.name|desc`,
+  `cards.*`, `deny.*`. Online: the codec carries the three commands (`idx` as a bitmask), `options.cards` travels in `go.o`.
 * **QUICK time limit** (DESIGN §15): `mt_time_limit {phase:'warn', at, score:[blue, red]}` 60 s before 15:00, then
   `{phase:'end', at, winner, score}` and the loser's Nexus falls (the normal victory flow follows).
 * **Spawn ring** (DESIGN §11): `rules.spawnPoint(team, slot)`; trainers spawn / respawn there (`unit.spawnX/spawnY`).

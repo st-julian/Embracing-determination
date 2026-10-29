@@ -1,9 +1,10 @@
 // mt/ui/menu-prefs.js — the menu choices that outlive a page load + the match-options contract. Owner: UX flow
 // (front-end screens). Pure module (no DOM at import time; localStorage reads are wrapped).
 //
-//   localStorage 'sv.options' = { difficulty, mode, flow, starter, spec, look, tmode }
+//   localStorage 'sv.options' = { difficulty, mode, cards, flow, starter, spec, look, tmode }
 //     difficulty / mode   match options handed to app.newMatch({seed, players, options}) (gameplay contract:
 //                         mt/data/options.js, DEFAULT_OPTIONS = {difficulty: 'easy', mode: 'classic'})
+//     cards               trainer skill cards on / off (boolean, default on) -> match option `cards` (input owner's ⚙ row)
 //     flow                the last main-menu choice: 'solo' | 'friend' | 'local' (the menu opens on it)
 //     starter             the last chosen first monster: 'cindle' | 'puddlet' | 'sproutle' (player entry `starter`)
 //     spec / look         the trainer specialisation / outfit last used (lobby rows; solo uses them silently)
@@ -26,7 +27,7 @@ export const DEFAULT_OPTIONS = OPTIONS_DEFAULT;
 const FLOWS = ['solo', 'friend', 'local'];
 const SPECS = ['attack', 'healing', 'magic'];
 
-const DEF = { ...DEFAULT_OPTIONS, flow: 'solo', starter: 'cindle', spec: 'attack', look: 'attack', tmode: 'coop' };
+const DEF = { ...DEFAULT_OPTIONS, cards: true, flow: 'solo', starter: 'cindle', spec: 'attack', look: 'attack', tmode: 'coop' };
 const pick = (v, list, d) => (list.includes(v) ? v : d);
 
 let cache = null;
@@ -39,7 +40,7 @@ export function prefs() {
   // v2: CLASSIC (every tower) became the default; a mode stored before that was the old QUICK default, so it is dropped once
   if (r.v !== 2) delete r.mode;
   cache = {
-    difficulty: pick(r.difficulty, DIFFICULTIES, DEF.difficulty), mode: pick(r.mode, MODES, DEF.mode),
+    difficulty: pick(r.difficulty, DIFFICULTIES, DEF.difficulty), mode: pick(r.mode, MODES, DEF.mode), cards: typeof r.cards === 'boolean' ? r.cards : DEF.cards,
     flow: pick(r.flow, FLOWS, DEF.flow), starter: pick(r.starter, STARTERS, DEF.starter),
     spec: pick(r.spec, SPECS, DEF.spec), look: pick(r.look, SPECS, DEF.look), tmode: pick(r.tmode, ['coop', 'vs'], DEF.tmode),
     v: 2,
@@ -53,7 +54,7 @@ export function savePrefs(patch) {
   return p;
 }
 /** the options object for app.newMatch */
-export function matchOptions() { const p = prefs(); return normalizeOptions({ difficulty: p.difficulty, mode: p.mode }); }
+export function matchOptions() { const p = prefs(); return normalizeOptions({ difficulty: p.difficulty, mode: p.mode, cards: p.cards }); }
 /** cycle a value through its list */
 export function cycle(list, v, d) { const i = list.indexOf(v); return list[((i < 0 ? 0 : i) + d + list.length) % list.length]; }
 

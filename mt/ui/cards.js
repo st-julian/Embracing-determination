@@ -192,7 +192,9 @@ export class SlotCard {
     setAb(this.bCap, now, T.cdEnd.capture, (A[2] && A[2].cdTotal) || CAPTURE.cooldown, { off: !u.alive });
     setAb(this.bSkill, now, T.cdEnd.skill, (A[3] && A[3].cdTotal) || SPEC_SKILL_CD, { off: !hasMon || !u.alive });
     setAb(this.bPot, now, T.cdEnd.potion, (S[0] && S[0].cdTotal) || TRAINER.potion.cooldown, { off: !hasMon || !u.alive });
-    show(this.bSkill.el, hasMon); show(this.bPot.el, hasMon);   // monster-only actions appear with the first monster
+    // monster-only actions appear with the first monster; with trainer CARDS on (match option) the card bar
+    // (mt/ui/input/skillcards.js) replaces the single trainer skill
+    show(this.bSkill.el, hasMon && !(w.mt && w.mt.cards && w.mt.cards.on)); show(this.bPot.el, hasMon);
     const recalling = u.recallStart != null && u.recallStart >= 0 && u.alive;
     setAb(this.bRec, now, 0, 1, { off: !u.alive });
     setCls(this.bRec.el, 'ready', recalling);

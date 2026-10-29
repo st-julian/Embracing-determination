@@ -3,7 +3,9 @@
 // measurements: docs/BALANCE.md "Difficulty & pacing".
 //
 // CONTRACT for UI / lobby / netplay (also in game/mt/README.md "Match options"):
-//   app.newMatch({ seed, players, options })      options = { difficulty: 'easy'|'normal'|'hard', mode: 'quick'|'classic' }
+//   app.newMatch({ seed, players, options })      options = { difficulty: 'easy'|'normal'|'hard', mode: 'quick'|'classic',
+//                                                             cards: boolean (trainer cards, DESIGN §16; false = the old
+//                                                             single trainer skill) }
 //   players[i].starter = 'cindle'|'puddlet'|'sproutle'   (the trainer's starter monster; omitted = picked from the seed,
 //                        'none' = start with no monster — tests / fixtures only)
 //   Missing / invalid fields fall back to DEFAULT_OPTIONS (normalizeOptions never throws). The sim reads the result as
@@ -20,15 +22,16 @@ import { abilityFor } from './abilities.js';
 
 export const DIFFICULTY_IDS = ['easy', 'normal', 'hard'];
 export const MODE_IDS = ['quick', 'classic'];
-export const DEFAULT_OPTIONS = Object.freeze({ difficulty: 'easy', mode: 'classic' });   // full map with every tower by default (user's call); QUICK = mid-lane-only option
+export const DEFAULT_OPTIONS = Object.freeze({ difficulty: 'easy', mode: 'classic', cards: true });   // full map with every tower by default (user's call); QUICK = mid-lane-only option
 
 /** Valid options object (a NEW object); unknown / invalid values fall back to DEFAULT_OPTIONS. Never throws. */
 export function normalizeOptions(o) {
   const own = (k) => (o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined);   // own fields only
-  const d = own('difficulty'), m = own('mode');
+  const d = own('difficulty'), m = own('mode'), c = own('cards');
   return {
     difficulty: DIFFICULTY_IDS.includes(d) ? d : DEFAULT_OPTIONS.difficulty,
     mode: MODE_IDS.includes(m) ? m : DEFAULT_OPTIONS.mode,
+    cards: typeof c === 'boolean' ? c : DEFAULT_OPTIONS.cards,
   };
 }
 
@@ -39,6 +42,7 @@ export function validateOptions(o) {
   else if (o) {
     if (o.difficulty !== undefined && !DIFFICULTY_IDS.includes(o.difficulty)) errors.push('difficulty must be one of ' + DIFFICULTY_IDS.join('|'));
     if (o.mode !== undefined && !MODE_IDS.includes(o.mode)) errors.push('mode must be one of ' + MODE_IDS.join('|'));
+    if (o.cards !== undefined && typeof o.cards !== 'boolean') errors.push('cards must be a boolean');
   }
   return { ok: !errors.length, options: normalizeOptions(o), errors };
 }

@@ -46,6 +46,11 @@ void main(){
     ol = band(r, 0.72, 1.0, aa);
     core = band(r, 0.78, 0.94, aa);
     ol = max(ol, band(r, 0.0, 0.72, aa) * 0.16 * (0.6 + 0.4 * r));
+  } else if (uKind > 3.5) {                // card range ring: thin dashed rim + faint fill (skillcards.js drag-aim)
+    float dash = step(0.42, fract(ang * 36.0 / (2.0 * PI) - uTime * 0.6));
+    ol = band(r, 0.968, 1.0, aa);
+    core = band(r, 0.978, 0.992, aa) * (0.35 + 0.65 * dash);
+    ol = max(ol, band(r, 0.0, 0.968, aa) * 0.06);
   } else {                                 // dashed aim line (uv.x along)
     float ph = fract(vUv.x * 7.0 - uTime * 2.5);
     float y = abs(vUv.y - 0.5);
@@ -98,8 +103,8 @@ export class Reticles {
   get(l) {
     let p = this.per.get(l.slot);
     if (!p || p.color !== l.color) {
-      if (p) for (const k of ['aim', 'line', 'lock', 'ring']) { this.group.remove(p[k]); p[k].geometry.dispose(); p[k].material.dispose(); }
-      p = { color: l.color, aim: this.mesh(0, l.color), lock: this.mesh(1, l.color), ring: this.mesh(2, l.color), line: this.mesh(3, l.color), tag: p ? p.tag : null };
+      if (p) for (const k of ['aim', 'line', 'lock', 'ring', 'range']) { this.group.remove(p[k]); p[k].geometry.dispose(); p[k].material.dispose(); }
+      p = { color: l.color, aim: this.mesh(0, l.color), lock: this.mesh(1, l.color), ring: this.mesh(2, l.color), line: this.mesh(3, l.color), range: this.mesh(4, l.color), tag: p ? p.tag : null };
       this.per.set(l.slot, p);
     }
     return p;
@@ -132,7 +137,7 @@ export class Reticles {
     for (const l of L) {
       seen.add(l.slot);
       const p = this.get(l), me = w.units.get(l.unitId), aim = app.mtAim && app.mtAim[l.slot];
-      for (const k of ['aim', 'line', 'lock', 'ring']) p[k].material.uniforms.uTime.value = this.time;
+      for (const k of ['aim', 'line', 'lock', 'ring', 'range']) p[k].material.uniforms.uTime.value = this.time;
       const alive = !!(me && me.alive);
       const mx = alive ? me.prevX + (me.x - me.prevX) * f.alpha : 0, my = alive ? me.prevY + (me.y - me.prevY) * f.alpha : 0;
       // player ring + tag
@@ -147,8 +152,10 @@ export class Reticles {
         }
         const disp = show ? '' : 'none'; if (tag.style.display !== disp) tag.style.display = disp;
       }
-      // aim reticle + line
+      // aim reticle + line (+ the card's range ring around the trainer while a card is drag-aimed)
       const aimOn = !!(alive && aim && aim.active && (l.lastInputGamepad || aim.touch));
+      p.range.visible = !!(aimOn && aim.range > 0);
+      if (p.range.visible) { const s = aim.range * 2; p.range.scale.set(s, s, 1); p.range.position.set(mx, heightAt(mx, my) + 0.09, my); }
       p.aim.visible = aimOn; p.line.visible = aimOn;
       if (aimOn) {
         p.aim.position.set(aim.x, discY(aim.x, aim.y, 0.95) + 0.1, aim.y); p.aim.scale.set(1.9, 1.9, 1);
@@ -174,7 +181,7 @@ export class Reticles {
         p.lock.position.set(lx, discY(lx, ly, s * 0.5) + 0.08, ly); p.lock.scale.set(s, s, 1);
       }
     }
-    for (const [slot, p] of this.per) if (!seen.has(slot)) { for (const k of ['aim', 'line', 'lock', 'ring']) p[k].visible = false; if (p.tag) p.tag.style.display = 'none'; }
+    for (const [slot, p] of this.per) if (!seen.has(slot)) { for (const k of ['aim', 'line', 'lock', 'ring', 'range']) p[k].visible = false; if (p.tag) p.tag.style.display = 'none'; }
   }
 
   dispose() { this.ctx.scene.remove(this.group); if (this.tagRoot) this.tagRoot.remove(); }

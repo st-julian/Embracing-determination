@@ -11,7 +11,8 @@
 //                  monster) · MOVE 1 / MOVE 2 and CAPTURE with DRAG-TO-AIM (drag out = aim on the ground with the
 //                  shared reticle, release = cast; drag back to the centre = cancel; tap = auto-aim) · capture-chance
 //                  ring + % on the targeted wild monster · SWAP · TRAINER SKILL · POTION · TARGET (tap = cycle lock,
-//                  hold = clear) · EVOLVE (contextual, pulses when ready)
+//                  hold = clear) · EVOLVE (contextual, pulses when ready). With skill CARDS on, the card bar
+//                  (skillcards.js, bottom between the HUD card and the cluster) replaces SKILL and TARGET takes its slot
 //   top-left       PAUSE (≡) · SCOREBOARD · RECALL (hold 0.5 s to start the channel) · REGROUP
 //   minimap        drag = camera peek (HUD minimap); long-press = ping
 //   portrait       a "rotate to landscape" screen
@@ -157,9 +158,16 @@ export class TouchControls {
       if (lim < Math.sin(a2max * Math.PI / 180)) a2max = Math.max(36, Math.asin(Math.max(-1, Math.min(1, lim))) * 180 / Math.PI);
     }
     const a2s = [-4, -4 + (a2max + 4) / 3, -4 + (a2max + 4) * 2 / 3, a2max];
-    at(this.btn.swap, R2, a2s[0]); at(this.btn.skill, R2, a2s[1]); at(this.btn.potion, R2, a2s[2]); at(this.btn.evolve, R2, a2s[3]);
-    // TARGET: on the bottom row, left of the cluster (right thumb reach)
-    this.place(this.btn.target, ax - R2 - tu - Math.round(s * 0.02) - 8, ay + Math.round(tb * 0.12));
+    // skill CARDS on (skillcards.js): the card bar replaces SKILL; TARGET takes SKILL's ring slot so the bottom row left
+    // of the cluster is free for the 5 cards
+    const cards = this.cardsOn = !!(this.app.mtCardsUI && this.app.mtCardsUI.on);
+    at(this.btn.swap, R2, a2s[0]); at(this.btn.potion, R2, a2s[2]); at(this.btn.evolve, R2, a2s[3]);
+    if (cards) at(this.btn.target, R2, a2s[1]);
+    else {
+      at(this.btn.skill, R2, a2s[1]);
+      // TARGET: on the bottom row, left of the cluster (right thumb reach)
+      this.place(this.btn.target, ax - R2 - tu - Math.round(s * 0.02) - 8, ay + Math.round(tb * 0.12));
+    }
     // joystick ghost rest position + zone
     this.joyRest = { x: sa.l + pad + jr + 8, y: H - Math.max(sa.b, 4) - pad - jr - 4 };
     this.zoneX = Math.min(W * 0.48, this.btn.target.x - tu);   // left of the cluster (and its TARGET button)
@@ -419,6 +427,7 @@ export class TouchControls {
     if ((this._pw | 0) !== innerWidth || (this._ph | 0) !== innerHeight) { this._pw = innerWidth; this._ph = innerHeight; this.layout(); }
     const lv = this.app.mtHud && this.app.mtHud.layoutVer; // HUD geometry changed (touch on, card mode, locals, scale)
     if (lv !== undefined && lv !== this.hudLayoutVer) { this.hudLayoutVer = lv; this.layout(); }
+    if (!!(this.app.mtCardsUI && this.app.mtCardsUI.on) !== !!this.cardsOn) this.layout(); // cards on / off: SKILL ⇄ card bar
     const show = this.active() && !this.modal();
     if (show !== this.vis) {
       this.vis = show; setCls(this.root, 'on', show); this.app.mtTouch.active = show;
@@ -487,6 +496,7 @@ export class TouchControls {
     if (!a1) { if (B.a1.el.dataset.lv !== '?') B.a1.el.dataset.lv = '?'; } else if (B.a1.el.dataset.lv) B.a1.el.dataset.lv = '';
     this.cd(B.capture, now, T.cdEnd.capture, (A[2] && A[2].cdTotal) || CAPTURE.cooldown, { off: !alive });
     this.setIcon(B.skill, SPEC_ICON[T.spec] || 'trainer/rally');
+    setCls(B.skill.el, 'hidden', !!this.cardsOn); // the card bar replaces the single trainer skill
     this.cd(B.skill, now, T.cdEnd.skill, (A[3] && A[3].cdTotal) || SPEC_SKILL_CD, { off: !rec || !alive });
     this.cd(B.potion, now, T.cdEnd.potion, (S[0] && S[0].cdTotal) || TRAINER.potion.cooldown, { off: !rec || !alive });
     setCls(B.swap.el, 'hidden', !bench); // nothing to swap to: no button (it appears with the second monster)

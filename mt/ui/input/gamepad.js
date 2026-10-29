@@ -12,7 +12,9 @@
 //   ○ 1 [B]         capture orb at the locked / aimed / nearest wild monster. Party full: HOLD ○ (0.6 s) confirms
 //                   replacing the benched monster (or press again within 3 s)
 //   □ 2 [X]         monster ability 1        △ 3 [Y]  monster ability 2
-//   L1 4            swap monster             R1 5     trainer skill (Rally / Mend / Surge)
+//   L1 4            swap monster             R1 5     trainer skill (Rally / Mend / Surge); with skill CARDS
+//                   (skillcards.js): tap R1 = play the selected card, HOLD R1 = card ring (right stick / D-pad ◀ ▶
+//                   picks, release plays, ○ cancels); at base R1 opens the card panel (D-pad, ✕ mark, □ move, △ redraw)
 //   L2 6            potion                   R2 7     lock nearest target / cycle; HOLD R2 0.5 s clears the lock
 //   D-pad ↑ 12      evolve   ↓ 13 regroup   ← 14 recall   → 15 / Create 8 (hold) scoreboard
 //   Options 9       pause menu (pad menu navigation: D-pad/stick + ✕, ○ = back — padnav.js)
@@ -28,6 +30,7 @@ import { PadNav } from './padnav.js';
 import { Reticles } from './reticle.js';
 import { TouchControls } from './touch.js';
 import { FirstMatchHints } from './hints.js';
+import { SkillCards } from './skillcards.js';
 
 const AIM_MIN = 2.2, AIM_MAX = 9.0;            // reticle distance range (m); 9 = capture throw range
 const PICK_RANGE = 10.5, LOCK_RANGE = 13, LOCK_KEEP = 16;
@@ -48,6 +51,7 @@ export class GamepadInput {
     sub('padnav', () => (this.padnav = new PadNav(ctx, locals, this)));
     sub('reticle', () => (this.reticles = new Reticles(ctx)));
     sub('touch', () => (this.touch = new TouchControls(ctx, locals, this)));
+    sub('cards', () => (this.cards = new SkillCards(ctx, locals, this)));
     sub('hints', () => (this.hints = new FirstMatchHints(ctx, locals, this)));
     // [load/hitch] the legacy loop calls this BEFORE the frame's sim ticks ([MT-HOOK] inputEarly in index-*.js qk):
     // stick / joystick movement reaches the sim one frame earlier than from update() (which runs after the ticks)
@@ -147,7 +151,9 @@ export class GamepadInput {
       return;
     }
     if (this.modal()) { s.dir = [0, 0]; aim.active = false; return; } // padnav.js drives the DOM
-    const sb = s.pressed(BTN.CREATE) || s.pressed(BTN.RIGHT);
+    // skill cards: 1 = R1 card ring open (right stick / D-pad ◀ ▶ / ○ pick cards), 2 = the base card panel has this pad
+    const cm = this.cards ? this.cards.padMode(pad, s, me) : 0;
+    const sb = s.pressed(BTN.CREATE) || (!cm && s.pressed(BTN.RIGHT));
     if (sb !== s.scoreHeld) { s.scoreHeld = sb; app.fire('ui', { panel: sb ? 'scoreboard' : 'none' }); }
     if (app.paused || !me.alive) { s.dir = [0, 0]; aim.active = false; aim.hold = null; return; }
 
@@ -161,13 +167,14 @@ export class GamepadInput {
     const rawMag = Math.hypot(pad.raw[2], pad.raw[3]);
     const wx = ax * cy + ay * sy, wy = -ax * sy + ay * cy;
     const now = f.time;
-    if (rawMag > STICK.flick && !s.flick) s.flick = { t0: now, dx: wx, dy: wy, cycled: false };
+    if (cm) s.flick = null;
+    if (!cm && rawMag > STICK.flick && !s.flick) s.flick = { t0: now, dx: wx, dy: wy, cycled: false };
     if (s.flick && rawMag > STICK.flick) { s.flick.dx = wx; s.flick.dy = wy; }
     if (s.flick && rawMag < STICK.flickReset) {
       if (now - s.flick.t0 < FLICK_TIME && !s.flick.cycled) this.cycleLock(w, me, s, Math.atan2(s.flick.dy, s.flick.dx), true);
       s.flick = null;
     }
-    const aiming = ak > 0 && !(s.flick && now - s.flick.t0 < FLICK_TIME * 0.6 && rawMag > STICK.flick);
+    const aiming = !cm && ak > 0 && !(s.flick && now - s.flick.t0 < FLICK_TIME * 0.6 && rawMag > STICK.flick);
     if (aiming) {
       const n = Math.hypot(wx, wy) || 1, dist = AIM_MIN + (AIM_MAX - AIM_MIN) * ak;
       aim.x = me.x + (wx / n) * dist; aim.y = me.y + (wy / n) * dist; aim.dist = dist; aim.dir = Math.atan2(wy, wx);
@@ -188,12 +195,13 @@ export class GamepadInput {
     };
 
     // --- actions
+    if (cm === 2) { aim.hold = null; this.cards.padFrame(pad, s, me, null); return; } // the card panel takes the face buttons + D-pad
     if (s.down(BTN.CROSS)) {
       const t = enemyAt();
       if (t) { if (!send({ type: 'monsterAttack', targetId: t.id })) send({ type: 'attack', targetId: t.id }); }
       else send({ type: 'attackNearest', range: 7 });
     }
-    if (s.down(BTN.CIRCLE)) {
+    if (s.down(BTN.CIRCLE) && cm !== 1) {
       const t = (lock && isCapturable(lock) ? lock : null) || (aiming ? nearest(w, aim.x, aim.y, 3.5, isCapturable) : null) || pick(w, me, aimDir, 9.5, isCapturable);
       if (t) { s.capT = t.id; send({ type: 'capture', targetId: t.id }); rumblePattern(pad.index, 'throw'); }
       else if (aiming) send({ type: 'capture', x: aim.x, y: aim.y });
@@ -217,11 +225,15 @@ export class GamepadInput {
       if (send({ type: 'monsterCast', slot, targetId: t ? t.id : -1, x, y })) rumblePattern(pad.index, 'ability');
     }
     if (s.down(BTN.L1)) send({ type: 'swap' });
-    if (s.down(BTN.R1)) send({ type: 'trainerSkill' });
+    const cards = !!(this.cards && this.cards.cardsOn(me));
+    if (s.down(BTN.R1) && !cards) send({ type: 'trainerSkill' });   // with cards: R1 = card (tap) / card ring (hold)
     if (s.down(BTN.L2)) send({ type: 'potion' });
-    if (s.down(BTN.UP)) send({ type: 'evolve' });
-    if (s.down(BTN.DOWN)) send({ type: 'regroup' });
-    if (s.down(BTN.LEFT)) send({ type: 'recall' });
+    if (!cm) {
+      if (s.down(BTN.UP)) send({ type: 'evolve' });
+      if (s.down(BTN.DOWN)) send({ type: 'regroup' });
+      if (s.down(BTN.LEFT)) send({ type: 'recall' });
+    }
+    if (cards) this.cards.padFrame(pad, s, me, { aiming, aim, lockId: s.lockId });
   }
 
   /** Left stick -> 'dir' order (camera-relative, analog, leashed). Returns the direction for aim / facing. */

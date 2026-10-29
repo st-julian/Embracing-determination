@@ -18,7 +18,16 @@ export const TYPES = [
   ['cast', ['slot', 'x', 'y', 'targetId']], ['spell', ['slot', 'x', 'y', 'targetId']], ['potion', []],
   ['capture', ['targetId', 'x', 'y', 'confirm']], ['swap', []], ['evolve', ['bench']], ['regroup', []],
   ['monsterCast', ['slot', 'x', 'y', 'targetId']], ['monsterAttack', ['targetId']], ['trainerSkill', []], ['monsterAutoCast', ['on']],
+  // trainer cards (mt/sim/cards.js) — appended: the indices above never move
+  ['card', ['slot', 'targetId', 'x', 'y']], ['mulligan', ['idx']], ['cardMove', ['from', 'to']],
 ];
+/** fields packed for the wire: `idx` (mulligan hand indices 0..15, unique) travels as a bitmask number */
+const PACK = {
+  idx: {
+    enc: (v) => { if (!Array.isArray(v) || v.length > 16) return undefined; let m = 0; for (const i of v) { if (!Number.isInteger(i) || i < 0 || i > 15 || (m & (1 << i))) return undefined; m |= 1 << i; } return m; },
+    dec: (m) => { if (!Number.isInteger(m) || m < 0 || m > 0xffff) return undefined; const o = []; for (let i = 0; i < 16; i++) if (m & (1 << i)) o.push(i); return o; },
+  },
+};
 const INDEX = Object.fromEntries(TYPES.map(([n], i) => [n, i]));
 const QUANT = { x: 100, y: 100, range: 100, dx: 1000, dy: 1000 };   // decimals kept (wire size; identical on all peers)
 const MAX_STR = 40;
@@ -40,10 +49,10 @@ export function encode(cmd) {
   if (ti >= 0) {
     const fields = TYPES[ti][1];
     let ok = true;
-    for (const k of Object.keys(cmd)) if (k !== 'type' && (!fields.includes(k) || !plain(cmd[k]))) { ok = false; break; }
+    for (const k of Object.keys(cmd)) if (k !== 'type' && (!fields.includes(k) || !(PACK[k] ? cmd[k] === undefined || PACK[k].enc(cmd[k]) !== undefined : plain(cmd[k])))) { ok = false; break; }
     if (ok) {
       const out = [ti];
-      for (const f of fields) out.push(cmd[f] === undefined ? null : quant(f, cmd[f]));
+      for (const f of fields) out.push(cmd[f] === undefined ? null : PACK[f] ? PACK[f].enc(cmd[f]) : quant(f, cmd[f]));
       while (out.length > 1 && out[out.length - 1] === null) out.pop();
       return out;
     }
@@ -104,6 +113,8 @@ export function decode(enc) {
     const v = enc[i + 1];
     if (v === null || v === undefined) continue;
     if (!plain(v)) return null;
+    const P = PACK[T[1][i]];
+    if (P) { const d = P.dec(v); if (d === undefined) return null; cmd[T[1][i]] = d; continue; }
     cmd[T[1][i]] = v;
   }
   return cmd;

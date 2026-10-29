@@ -766,9 +766,9 @@ export class Lobby {
     if (id === 'code') { O.prevView = 'room'; O.view = 'code'; O.code = ''; O.cur = 0; O.focus = 0; this.netCard.key = ''; this.sfx('click'); return; }
     if (id.startsWith('g:')) { const code = id.slice(2); O.view = 'wait'; O.want = 'join'; O.joinCode = code; O.busy = false; this.netGo(); this.sfx('confirm'); return; }
     if (id === 'coop' || id === 'vs') { this.setTeamMode(id); return; }
-    if (id === 'diff' || id === 'len') {
+    if (id === 'diff' || id === 'len' || id === 'cardsopt') {
       if (!net.isHost) { this.sfx('deny'); return; }
-      const P = prefs(); savePrefs(id === 'diff' ? { difficulty: cycle(DIFFICULTIES, P.difficulty, 1) } : { mode: cycle(MODES, P.mode, 1) });
+      const P = prefs(); savePrefs(id === 'diff' ? { difficulty: cycle(DIFFICULTIES, P.difficulty, 1) } : id === 'len' ? { mode: cycle(MODES, P.mode, 1) } : { cards: !P.cards });   // cardsopt: skill cards ON / OFF (input owner)
       if (net.setMatchOptions) net.setMatchOptions(matchOptions());
       this.sfx('click'); return;
     }
@@ -902,7 +902,8 @@ export class Lobby {
       B('two' + (tm === 'vs' ? ' on' : ''), tr, 'vs', `<span>${t('room.versus')}</span><small>${t('room.versus.sub')}</small>`);
       const orow = h('div', 'rm-row', ppl);
       const dl = t('opt.difficulty') + ' ' + t('opt.difficulty.' + (opt.difficulty || 'easy')), ll = t('opt.mode') + ' ' + t('opt.mode.' + (opt.mode || 'classic'));
-      if (host) { B('', orow, 'diff', dl + ' ▶'); B('', orow, 'len', ll + ' ▶'); } else { h('div', 'rbtn px dis', orow, dl); h('div', 'rbtn px dis', orow, ll); }
+      const cl = t('opt.cards') + ' ' + t('opt.cards.' + (opt.cards === false ? 'off' : 'on'));   // skill cards (match option `cards`)
+      if (host) { B('', orow, 'diff', dl + ' ▶'); B('', orow, 'len', ll + ' ▶'); B('', orow, 'cardsopt', cl + ' ▶'); } else { h('div', 'rbtn px dis', orow, dl); h('div', 'rbtn px dis', orow, ll); h('div', 'rbtn px dis', orow, cl); }
       const me = ms.find((m) => m.me) || {}, can = ms.length >= 2;
       // the host's START says why it cannot be pressed yet (no friend in the room): grey, dashed, the reason as label
       const goLab = host ? (!can ? t('room.waitFriend') : O.hostGo ? t('room.waiting') : t('net.start')) : me.rd ? t('lobby.ready') : t('lobby.readyQ');

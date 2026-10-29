@@ -8,7 +8,7 @@
 //               ともだちと あそぶ / With a friend   -> starter -> the online room (lobby.js, one tap creates it)
 //               おなじ がめんで / Same screen       -> the pad-join lobby (lobby.js; a starter row per card)
 //             the last choice is remembered (sv.options.flow) and focused when the menu opens.
-//   settings  ⚙: language, bot strength (difficulty), match length (mode) — persisted in sv.options.
+//   settings  ⚙: language, bot strength (difficulty), match length (mode), skill cards ON/OFF — persisted in sv.options.
 //   starter   "Choose your partner": the title's three starters, now interactive. ← → / swipe / tap a starter
 //             spotlights it (name, type, one line); ✕ / tap the lit one / the big button chooses it.
 //             Opened with ?join=<code> straight from the invite link (the room comes after the choice).
@@ -263,6 +263,7 @@ export class FrontMenu {
     if (row === 'lang') { nextLang(d); this.keyLang = getLang(); }
     else if (row === 'difficulty') savePrefs({ difficulty: cycle(DIFFICULTIES, p.difficulty, d) });
     else if (row === 'mode') savePrefs({ mode: cycle(MODES, p.mode, d) });
+    else if (row === 'cards') savePrefs({ cards: !p.cards });   // skill cards ON / OFF (match option `cards`)
     else if (row === 'ok') { this.open('main'); return; }
     this.sfx('click'); this.key_ = '';
   }
@@ -331,7 +332,7 @@ export class FrontMenu {
       if (ok) { const r = R[this.focus.settings]; if (r === 'ok') this.open('main'); else this.settingChange(r, 1); }
     }
   }
-  setRows() { return ['lang', 'difficulty', 'mode', 'ok']; }
+  setRows() { return ['lang', 'difficulty', 'mode', 'cards', 'ok']; }
 
   // ------------------------------------------------------------------ frame
   update(f) {
@@ -442,7 +443,8 @@ export class FrontMenu {
     wrap.addEventListener('click', (e) => { if (e.target === wrap) this.open('main'); });
     const band = h('div', 'band', card); band.appendChild(gearEl()); h('b', null, band, t('menu.settings'));
     const rows = h('div', 'rows', card);
-    const val = { lang: [getLang() === 'ja' ? '日本語' : 'English', ''], difficulty: [t('opt.difficulty.' + p.difficulty), t('opt.difficulty.' + p.difficulty + '.sub')], mode: [t('opt.mode.' + p.mode), t('opt.mode.' + p.mode + '.sub')] };
+    const val = { lang: [getLang() === 'ja' ? '日本語' : 'English', ''], difficulty: [t('opt.difficulty.' + p.difficulty), t('opt.difficulty.' + p.difficulty + '.sub')], mode: [t('opt.mode.' + p.mode), t('opt.mode.' + p.mode + '.sub')],
+      cards: [t('opt.cards.' + (p.cards ? 'on' : 'off')), t('opt.cards.' + (p.cards ? 'on' : 'off') + '.sub')] };
     R.forEach((row, i) => {
       if (row === 'ok') {
         const ok = btn('ok px' + (this.focus.settings === i ? ' f' : ''), card, t('menu.close'));

@@ -129,7 +129,12 @@ export class PauseMenu {
     const rows = [[tr('ctl.attack', 'Monster attack'), 'attack'], [tr('ctl.moves', 'Move 1 / Move 2'), 'a1', 'a2'], [tr('ctl.capture', 'Throw orb'), 'capture'], [tr('ctl.swap', 'Swap monster'), 'swap'], [tr('ctl.skill', 'Trainer skill'), 'skill'],
       [tr('ctl.potion', 'Potion'), 'potion'], [tr('ctl.evolve', 'Evolve'), 'evolve'], [tr('ctl.regroup', 'Regroup'), 'regroup'], [tr('ctl.recall', 'Recall'), 'recall']];
     this.keys.innerHTML = `<span class="hd">${tr('ctl.title', 'Controls')}</span><span class="hd">${tr('ctl.keys', 'Keys')}</span><span class="hd">${tr('ctl.pad', 'Pad')}</span>` +
-      rows.map(([n, a, b]) => `<span>${n}</span><span>${glyphHTML(a, false)}${b ? glyphHTML(b, false) : ''}</span><span>${glyphHTML(a, true)}${b ? glyphHTML(b, true) : ''}</span>`).join('');
+      rows.map(([n, a, b]) => {
+        // trainer skill CARDS on (match option; mt/ui/input/skillcards.js): keys 1–5, pad R1 (hold = card ring)
+        const w = this.app && this.app.world;
+        if (a === 'skill' && w && w.mt && w.mt.cards && w.mt.cards.on) return `<span>${tr('ctl.cards', 'Skill cards')}</span><span><span class="gk wide">1-5</span></span><span>${glyphHTML(a, true)}</span>`;
+        return `<span>${n}</span><span>${glyphHTML(a, false)}${b ? glyphHTML(b, false) : ''}</span><span>${glyphHTML(a, true)}${b ? glyphHTML(b, true) : ''}</span>`;
+      }).join('');
     void pad;
   }
   setOpen(on) {
