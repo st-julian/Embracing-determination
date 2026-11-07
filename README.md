@@ -21,6 +21,10 @@ is still available with `?world=3d`.
 > hand wide for a thick line, curl your fingers in for a thinner one, make a fist to lift the pen, and point one
 > finger at the top bar to pick colours or the eraser. Drawing plays music: height sets the note, an open hand is
 > louder, and each colour is a different instrument (the speaker button mutes it). It needs HTTPS or `localhost` for the camera.
+>
+> **[Voice Draw](draw/voice.html)** (`draw/voice.html`) goes the other way: you make sounds and it draws. Hum or sing to
+> move the pen (higher than your usual note curves right, lower curves left), louder makes a thicker line, your pitch
+> picks the colour, "shhh" sprays paint and a clap splats. It needs the microphone, so the same HTTPS rule applies.
 
 ## Install & launch
 
