@@ -25,6 +25,8 @@ is still available with `?world=3d`.
 > **[Voice Draw](draw/voice.html)** (`draw/voice.html`) goes the other way: you make sounds and it draws. Hum or sing to
 > move the pen (higher than your usual note curves right, lower curves left), louder makes a thicker line, your pitch
 > picks the colour, "shhh" sprays paint and a clap splats. It needs the microphone, so the same HTTPS rule applies.
+> Its **YouTube** button plays a video in the page while the microphone listens to it, and **File** draws straight from a
+> music file. Music mode turns loudness into line weight, brightness into steering and colour, and beats into splats.
 
 ## Install & launch
 
