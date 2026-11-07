@@ -17,9 +17,9 @@ is still available with `?world=3d`.
 - Up to 4 local players can share one screen, co-op against bots or in versus. Bots fill the empty slots of
   the six trainers.
 
-> **Also here: [Air Draw](draw/)** (`draw/index.html`), a small camera toy. It tracks your hand and draws where
-> your finger points: one finger up draws, two fingers move (and pick colours from the top bar), an open hand
-> erases, a fist rests. It needs HTTPS or `localhost` for the camera.
+> **Also here: [Air Draw](draw/)** (`draw/index.html`), a small camera toy. Your open palm is the pen: open your
+> hand wide for a thick line, curl your fingers in for a thinner one, make a fist to lift the pen, and point one
+> finger at the top bar to pick colours or the eraser. It needs HTTPS or `localhost` for the camera.
 
 ## Install & launch
 

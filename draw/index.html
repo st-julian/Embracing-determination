@@ -24,7 +24,7 @@
     display: flex; gap: 8px; align-items: center; padding: 8px; border-radius: 18px; background: var(--panel);
     border: 1px solid var(--edge); backdrop-filter: blur(8px); z-index: 5; max-width: calc(100vw - 20px); flex-wrap: wrap; justify-content: center; }
   .tool { position: relative; width: 52px; height: 52px; border-radius: 14px; border: 2px solid transparent; cursor: pointer;
-    display: grid; place-items: center; background: rgba(255,255,255,.07); color: var(--ink); font: 700 12px/1 system-ui; padding: 0; }
+    display: grid; place-items: center; background: rgba(255,255,255,.07); color: var(--ink); font: 700 13px/1 system-ui; padding: 0; }
   .tool svg { width: 24px; height: 24px; }
   .tool.swatch::after { content: ""; width: 30px; height: 30px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px rgba(0,0,0,.35); }
   .tool.swatch.rainbow::after { background: conic-gradient(red, orange, yellow, lime, cyan, blue, magenta, red); }
@@ -34,18 +34,27 @@
     background: conic-gradient(var(--accent) calc(var(--p, 0) * 1turn), transparent 0); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; padding: 3px; }
   .sep { width: 1px; height: 36px; background: var(--edge); margin: 0 2px; }
 
+  /* size gauge: a tapered wedge on the left edge, thin (closed hand) at the bottom, thick (open hand) at the top */
+  #gauge { position: fixed; left: max(14px, env(safe-area-inset-left)); top: 50%; transform: translateY(-50%); z-index: 4;
+    width: 92px; height: min(46vh, 340px); pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 10px 0; border-radius: 22px; background: var(--panel); border: 1px solid var(--edge); }
+  #gauge canvas { position: static; width: 100%; flex: 1; min-height: 0; }
+  #gauge .lbl { font-size: 18px; line-height: 1; }
+  #gauge .num { font: 700 12px/1 ui-monospace, monospace; color: var(--muted); font-variant-numeric: tabular-nums; }
+  @media (max-width: 560px) { #gauge { width: 60px; height: 34vh; } }
+
   #status { position: fixed; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); transform: translateX(-50%);
     background: var(--panel); border: 1px solid var(--edge); border-radius: 999px; padding: 7px 16px; font-size: 14px; color: var(--muted);
     z-index: 5; white-space: nowrap; }
   #status b { color: var(--ink); }
 
   #help { position: fixed; inset: 0; display: grid; place-items: center; z-index: 10; background: rgba(5,7,11,.82); padding: 16px; }
-  #help .card { max-width: 440px; width: 100%; background: #151924; border: 1px solid var(--edge); border-radius: 20px; padding: 22px 22px 18px; }
+  #help .card { max-width: 460px; width: 100%; background: #151924; border: 1px solid var(--edge); border-radius: 20px; padding: 22px 22px 18px; }
   #help h1 { margin: 0 0 4px; font-size: 26px; }
   #help p { margin: 0 0 14px; color: var(--muted); }
   #help ul { list-style: none; padding: 0; margin: 0 0 18px; display: grid; gap: 10px; }
   #help li { display: flex; gap: 12px; align-items: center; }
-  #help li span:first-child { font-size: 26px; width: 36px; text-align: center; }
+  #help li span:first-child { font-size: 26px; width: 36px; text-align: center; flex: none; }
   #help button.go { width: 100%; padding: 14px; border: 0; border-radius: 14px; background: var(--accent); color: #1a1a1a; font: 700 17px system-ui; cursor: pointer; }
   #help button.go:disabled { opacity: .6; cursor: wait; }
   #err { color: #ff9b9b; margin-top: 10px; font-size: 14px; min-height: 1em; }
@@ -60,17 +69,23 @@
 </div>
 
 <div id="toolbar"></div>
+<div id="gauge" aria-hidden="true">
+  <span class="lbl">✋</span>
+  <canvas id="gaugeCanvas"></canvas>
+  <span class="lbl">✊</span>
+  <span class="num" id="gaugeNum">–</span>
+</div>
 <div id="status">Starting…</div>
 
 <div id="help">
   <div class="card">
-    <h1>✍️ Air Draw</h1>
-    <p>Draw in the air with your finger. The camera follows your hand.</p>
+    <h1>✋ Air Draw</h1>
+    <p>Your palm is the pen. The camera follows your hand.</p>
     <ul>
-      <li><span>☝️</span><span><b>One finger up</b> — draw</span></li>
-      <li><span>✌️</span><span><b>Two fingers up</b> — move without drawing. Hover the buttons at the top to pick a colour.</span></li>
-      <li><span>✋</span><span><b>Open hand</b> — eraser</span></li>
-      <li><span>✊</span><span><b>Fist</b> — rest</span></li>
+      <li><span>✋</span><span><b>Open hand</b>: draw with the middle of your palm. Wide open makes a thick line.</span></li>
+      <li><span>🤏</span><span><b>Curl your fingers in</b> to make the line thinner. The gauge on the left shows the size.</span></li>
+      <li><span>✊</span><span><b>Fist</b>: stop drawing, so you can move without leaving a line.</span></li>
+      <li><span>☝️</span><span><b>Point one finger</b> at the buttons at the top to pick a colour, the eraser and more.</span></li>
     </ul>
     <button class="go" id="go">Turn on camera</button>
     <div id="err"></div>
@@ -89,16 +104,20 @@ const statusEl = $('status');
 
 // ---------- state ----------
 const COLORS = ['#ffffff', '#ff4d4d', '#ffa53d', '#ffe14d', '#4dff88', '#3dc8ff', '#7a6bff', '#ff5ce1'];
-const state = { color: COLORS[5], rainbow: false, size: 10, hue: 0, bg: 'dim' };
+// brush size ranges: [thinnest (hand nearly closed), thickest (hand wide open)]
+const RANGES = { S: [2, 14], M: [3, 34], L: [6, 70] };
+const state = { color: COLORS[5], rainbow: false, range: 'M', eraser: false, hue: 0, bg: 'dim' };
 let W = 0, H = 0, DPR = 1;
+const widthFor = (o) => { const [a, b] = RANGES[state.range]; return a + Math.pow(o, 1.3) * (b - a); };
+const inkColor = () => state.rainbow ? `hsl(${state.hue} 95% 60%)` : state.color;
 
 // ---------- toolbar ----------
 const ICONS = {
-  size: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="R" fill="currentColor"/></svg>',
   undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>',
   clear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
   cam: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M3 7h4l2-3h6l2 3h4v13H3z"/><circle cx="12" cy="13" r="4"/></svg>',
   save: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5M4 21h16"/></svg>',
+  eraser: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"><path d="m7 21-4-4L14 6l6 6-9 9H7Z"/><path d="m9 11 6 6M11 21h10"/></svg>',
 };
 const toolbar = $('toolbar');
 const tools = [];
@@ -113,16 +132,18 @@ function addTool({ cls = '', html = '', title, onPick, dwell = 0, style = '' }) 
 }
 function sep() { const s = document.createElement('div'); s.className = 'sep'; toolbar.appendChild(s); }
 
-const swatches = COLORS.map((c) => addTool({ cls: 'swatch', title: c, style: `--c:${c}`, dwell: 0,
-  onPick: (b) => { state.color = c; state.rainbow = false; markActive(b); } }));
-const rainbowBtn = addTool({ cls: 'swatch rainbow', title: 'Rainbow', dwell: 0,
-  onPick: (b) => { state.rainbow = true; markActive(b); } });
+const swatches = COLORS.map((c) => addTool({ cls: 'swatch', title: c, style: `--c:${c}`, dwell: 250,
+  onPick: (b) => { state.color = c; state.rainbow = false; setEraser(false); markActive(b); } }));
+const rainbowBtn = addTool({ cls: 'swatch rainbow', title: 'Rainbow', dwell: 250,
+  onPick: (b) => { state.rainbow = true; setEraser(false); markActive(b); } });
 sep();
-const SIZES = [5, 10, 20];
-const sizeBtn = addTool({ title: 'Brush size', dwell: 700, onPick: () => {
-  state.size = SIZES[(SIZES.indexOf(state.size) + 1) % SIZES.length]; renderSize(); } });
-function renderSize() { sizeBtn.innerHTML = ICONS.size.replace('R', { 5: 3, 10: 5.5, 20: 9 }[state.size]) + '<i class="ring"></i>'; }
-renderSize();
+const rangeBtn = addTool({ title: 'Brush size range (small / medium / large)', dwell: 700, onPick: () => {
+  state.range = { S: 'M', M: 'L', L: 'S' }[state.range]; renderRange(); } });
+function renderRange() { rangeBtn.innerHTML = `<span>${state.range}</span><i class="ring"></i>`; }
+renderRange();
+const eraserBtn = addTool({ html: ICONS.eraser, title: 'Eraser (your palm rubs out instead of drawing)', dwell: 600,
+  onPick: () => setEraser(!state.eraser) });
+function setEraser(on) { state.eraser = on; eraserBtn.classList.toggle('active', on); }
 addTool({ html: ICONS.undo, title: 'Undo', dwell: 700, onPick: undo });
 addTool({ html: ICONS.clear, title: 'Clear', dwell: 1000, onPick: clearAll });
 addTool({ html: ICONS.cam, title: 'Camera: dim / on / off', dwell: 700, onPick: () => {
@@ -136,6 +157,7 @@ function markActive(btn) { for (const s of [...swatches, rainbowBtn]) s.classLis
 markActive(swatches[5]);
 
 // ---------- canvas sizing ----------
+const gaugeCanvas = $('gaugeCanvas'), gctx = gaugeCanvas.getContext('2d');
 function resize() {
   const keep = document.createElement('canvas');
   keep.width = paint.width; keep.height = paint.height;
@@ -147,8 +169,12 @@ function resize() {
   if (keep.width) pctx.drawImage(keep, 0, 0, keep.width, keep.height, 0, 0, paint.width, paint.height);
   pctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   octx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const r = gaugeCanvas.getBoundingClientRect();
+  gaugeCanvas.width = Math.max(1, Math.round(r.width * DPR)); gaugeCanvas.height = Math.max(1, Math.round(r.height * DPR));
+  gctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  drawGauge(null);
 }
-addEventListener('resize', resize); resize();
+addEventListener('resize', resize);
 
 // ---------- undo / clear / save ----------
 const history = [];
@@ -185,96 +211,145 @@ function toScreen(lm) {
   return { x: ox + (1 - lm.x) * vw * s, y: oy + lm.y * vh * s };
 }
 
-// ---------- gesture reading ----------
-const d2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-function fingersUp(lm) {
-  // a finger is "up" when its tip is clearly farther from the wrist than its middle joint
-  const w = lm[0];
-  const up = (tip, pip) => d2(lm[tip], w) > d2(lm[pip], w) * 1.12;
-  const thumb = d2(lm[4], lm[17]) > d2(lm[3], lm[17]) * 1.05 && d2(lm[4], lm[5]) > d2(lm[0], lm[5]) * 0.45;
-  return { thumb, index: up(8, 6), middle: up(12, 10), ring: up(16, 14), pinky: up(20, 18) };
+// ---------- hand reading ----------
+// distances in true pixel proportions (x and y are normalised separately, z shares x's scale)
+function dist3(a, b) {
+  const vw = video.videoWidth || 1, vh = video.videoHeight || 1;
+  return Math.hypot((a.x - b.x) * vw, (a.y - b.y) * vh, ((a.z || 0) - (b.z || 0)) * vw);
 }
-function classify(f) {
-  const n = f.index + f.middle + f.ring + f.pinky;
-  if (n >= 4) return 'erase';
-  if (f.index && !f.middle && !f.ring && !f.pinky) return 'draw';
-  if (f.index && f.middle && !f.ring && !f.pinky) return 'hover';
-  if (n === 0) return 'rest';
-  return 'hover';
+const TIPS = [8, 12, 16, 20], PIPS = [6, 10, 14, 18];
+function readHand(lm) {
+  const w = lm[0];
+  const palm = dist3(w, lm[9]) || 1;                       // wrist → middle knuckle: the hand's own ruler
+  const ext = TIPS.map((t) => dist3(lm[t], w) / palm);     // ~0.8 curled … ~1.9 straight
+  const up = TIPS.map((t, i) => dist3(lm[t], w) > dist3(lm[PIPS[i]], w) * 1.1);
+  // openness 0 (fist) … 1 (wide open), from the average reach of the four fingers
+  const avg = ext.reduce((a, b) => a + b, 0) / 4;
+  const open = Math.min(1, Math.max(0, (avg - 1.0) / (1.75 - 1.0)));
+  const pointing = up[0] && !up[2] && !up[3] && ext[0] > 1.45 && ext[2] < 1.25 && ext[3] < 1.2;
+  const centre = [0, 5, 9, 13, 17].reduce((p, i) => ({ x: p.x + lm[i].x / 5, y: p.y + lm[i].y / 5 }), { x: 0, y: 0 });
+  return { open, pointing, centre, tip: lm[8] };
+}
+
+// One-Euro filter: heavy smoothing when the hand is still, light when it moves fast
+class OneEuro {
+  constructor(minCutoff = 1.0, beta = 0.008, dCutoff = 1.0) { Object.assign(this, { minCutoff, beta, dCutoff }); this.x = null; this.dx = 0; this.t = 0; }
+  static a(cut, dt) { const r = 2 * Math.PI * cut * dt; return r / (r + 1); }
+  filter(v, t) {
+    if (this.x === null) { this.x = v; this.t = t; return v; }
+    const dt = Math.max(1e-3, (t - this.t) / 1000); this.t = t;
+    const dx = (v - this.x) / dt;
+    this.dx += OneEuro.a(this.dCutoff, dt) * (dx - this.dx);
+    const cut = this.minCutoff + this.beta * Math.abs(this.dx);
+    this.x += OneEuro.a(cut, dt) * (v - this.x);
+    return this.x;
+  }
 }
 
 // per-hand trackers (keyed by handedness so two hands can draw at once)
 const hands = new Map();
 function tracker(key) {
-  if (!hands.has(key)) hands.set(key, { p: null, last: null, mode: 'rest', cand: 'rest', candN: 0, seen: 0, hot: null, hotT: 0, fired: false });
+  if (!hands.has(key)) hands.set(key, {
+    fx: new OneEuro(), fy: new OneEuro(), mode: 'rest', cand: 'rest', candN: 0, seen: 0,
+    open: 0, width: 0, pts: [], hot: null, hotT: 0, fired: false, p: null,
+  });
   return hands.get(key);
-}
-
-function strokeColor() {
-  if (!state.rainbow) return state.color;
-  state.hue = (state.hue + 2.5) % 360;
-  return `hsl(${state.hue} 95% 60%)`;
 }
 
 let strokeStarted = false;
 function handleHand(lm, key, now) {
   const t = tracker(key);
   t.seen = now;
-  const raw = classify(fingersUp(lm));
-  // debounce: need the same gesture for a few frames before switching (stops stray lines)
+  const h = readHand(lm);
+  t.open += (h.open - t.open) * 0.35;
+
+  // gesture with hysteresis: start the pen above 22% open, lift it below 10%
+  let raw;
+  if (h.pointing) raw = 'point';
+  else if (t.mode === 'pen') raw = t.open < 0.10 ? 'rest' : 'pen';
+  else raw = t.open > 0.22 ? 'pen' : 'rest';
   if (raw === t.cand) t.candN++; else { t.cand = raw; t.candN = 1; }
-  const need = raw === 'draw' ? 2 : 3;
-  if (t.candN >= need && t.mode !== raw) { t.mode = raw; t.last = null; }
-
-  // pointer position: fingertip for draw/hover, palm centre for eraser
-  const target = t.mode === 'erase'
-    ? toScreen({ x: (lm[0].x + lm[5].x + lm[17].x + lm[9].x) / 4, y: (lm[0].y + lm[5].y + lm[17].y + lm[9].y) / 4 })
-    : t.mode === 'hover'
-      ? toScreen({ x: (lm[8].x + lm[12].x) / 2, y: (lm[8].y + lm[12].y) / 2 })
-      : toScreen(lm[8]);
-
-  // smoothing: follow fast motion quickly, damp jitter when still
-  if (!t.p) t.p = { ...target };
-  const dist = Math.hypot(target.x - t.p.x, target.y - t.p.y);
-  const k = Math.min(1, 0.25 + dist / 60);
-  t.p.x += (target.x - t.p.x) * k; t.p.y += (target.y - t.p.y) * k;
-  const p = t.p;
-
-  if (t.mode === 'draw') {
-    if (!strokeStarted) { snapshot(); strokeStarted = true; }
-    pctx.globalCompositeOperation = 'source-over';
-    pctx.strokeStyle = strokeColor(); pctx.lineWidth = state.size;
-    pctx.lineCap = 'round'; pctx.lineJoin = 'round';
-    pctx.beginPath();
-    const from = t.last || p;
-    pctx.moveTo(from.x, from.y); pctx.lineTo(p.x + 0.01, p.y);
-    pctx.stroke();
-    t.last = { x: p.x, y: p.y };
-  } else if (t.mode === 'erase') {
-    if (!strokeStarted) { snapshot(); strokeStarted = true; }
-    const r = Math.max(30, d2(toScreen(lm[0]), toScreen(lm[9])) * 0.7);
-    pctx.globalCompositeOperation = 'destination-out';
-    pctx.lineWidth = r * 2; pctx.lineCap = 'round';
-    pctx.beginPath();
-    const from = t.last || p;
-    pctx.moveTo(from.x, from.y); pctx.lineTo(p.x + 0.01, p.y); pctx.stroke();
-    pctx.globalCompositeOperation = 'source-over';
-    t.last = { x: p.x, y: p.y };
-    t.eraseR = r;
-  } else {
-    t.last = null;
+  if (t.candN >= (raw === 'point' ? 3 : 2) && t.mode !== raw) {
+    t.mode = raw; t.pts = [];
+    t.fx = new OneEuro(); t.fy = new OneEuro();   // fresh filter so the cursor snaps to the new anchor point
   }
 
-  // toolbar hover-select (only while hovering with two fingers)
+  const anchor = toScreen(t.mode === 'point' ? h.tip : h.centre);
+  const p = { x: t.fx.filter(anchor.x, now), y: t.fy.filter(anchor.y, now) };
+  t.p = p;
+  const targetW = widthFor(t.open) * (state.eraser ? 2.2 : 1);
+  t.width = t.width ? t.width + (targetW - t.width) * 0.3 : targetW;
+
+  if (t.mode === 'pen') {
+    if (!strokeStarted) { snapshot(); strokeStarted = true; }
+    t.pts.push(p);
+    if (t.pts.length > 3) t.pts.shift();
+    drawSegment(t);
+  }
+
+  // toolbar hover-select while pointing
   let hot = null;
-  if (t.mode === 'hover') {
+  if (t.mode === 'point') {
     const el = document.elementFromPoint(p.x, p.y);
     hot = el && el.closest && el.closest('.tool');
   }
   if (hot !== t.hot) { t.hot = hot; t.hotT = now; t.fired = false; }
   if (hot && !t.fired && now - t.hotT >= hot._dwell) { t.fired = true; hot._pick(hot); }
 
-  return { t, p, lm };
+  return { t, p, lm, h };
+}
+
+// smooth stroke: quadratic curve through the midpoints of the last three points
+function drawSegment(t) {
+  const pts = t.pts;
+  pctx.lineCap = 'round'; pctx.lineJoin = 'round';
+  pctx.lineWidth = t.width;
+  pctx.globalCompositeOperation = state.eraser ? 'destination-out' : 'source-over';
+  if (!state.eraser) { if (state.rainbow) state.hue = (state.hue + 2) % 360; pctx.strokeStyle = inkColor(); }
+  else pctx.strokeStyle = '#000';
+  pctx.beginPath();
+  if (pts.length === 1) { pctx.moveTo(pts[0].x, pts[0].y); pctx.lineTo(pts[0].x + 0.01, pts[0].y); }
+  else if (pts.length === 2) { pctx.moveTo(pts[0].x, pts[0].y); pctx.lineTo((pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2); }
+  else {
+    const [a, b, c] = pts;
+    pctx.moveTo((a.x + b.x) / 2, (a.y + b.y) / 2);
+    pctx.quadraticCurveTo(b.x, b.y, (b.x + c.x) / 2, (b.y + c.y) / 2);
+  }
+  pctx.stroke();
+  pctx.globalCompositeOperation = 'source-over';
+}
+
+// ---------- gauge (left): a wedge from thinnest to thickest, with the live size marked ----------
+function drawGauge(item) {
+  const r = gaugeCanvas.getBoundingClientRect(), gw = r.width, gh = r.height;
+  if (!gw || !gh) return;
+  gctx.clearRect(0, 0, gw, gh);
+  const [lo, hi] = RANGES[state.range];
+  const maxHalf = gw / 2 - 6, cx = gw / 2, top = 8, bot = gh - 8;
+  const halfAt = (o) => Math.max(1, Math.min(maxHalf, widthFor(o) / hi * maxHalf));
+  // wedge outline
+  gctx.beginPath();
+  for (let i = 0; i <= 40; i++) { const o = i / 40, y = bot - o * (bot - top); gctx.lineTo(cx + halfAt(o), y); }
+  for (let i = 40; i >= 0; i--) { const o = i / 40, y = bot - o * (bot - top); gctx.lineTo(cx - halfAt(o), y); }
+  gctx.closePath();
+  gctx.fillStyle = 'rgba(255,255,255,.08)'; gctx.fill();
+  gctx.strokeStyle = 'rgba(255,255,255,.25)'; gctx.lineWidth = 1; gctx.stroke();
+  // pen-down threshold tick
+  const ty = bot - 0.22 * (bot - top);
+  gctx.setLineDash([3, 3]); gctx.beginPath(); gctx.moveTo(4, ty); gctx.lineTo(gw - 4, ty); gctx.stroke(); gctx.setLineDash([]);
+  const num = $('gaugeNum');
+  if (!item) { num.textContent = `${lo}–${hi}px`; return; }
+  const o = item.t.open, y = bot - o * (bot - top), drawing = item.t.mode === 'pen';
+  // filled part of the wedge up to the current openness
+  gctx.save(); gctx.beginPath();
+  for (let i = 0; i <= 40; i++) { const oo = (i / 40) * o, yy = bot - oo * (bot - top); gctx.lineTo(cx + halfAt(oo), yy); }
+  for (let i = 40; i >= 0; i--) { const oo = (i / 40) * o, yy = bot - oo * (bot - top); gctx.lineTo(cx - halfAt(oo), yy); }
+  gctx.closePath();
+  gctx.globalAlpha = drawing ? .85 : .3; gctx.fillStyle = state.eraser ? '#ffffff' : inkColor(); gctx.fill(); gctx.restore();
+  // marker line
+  gctx.strokeStyle = '#fff'; gctx.lineWidth = 2;
+  gctx.beginPath(); gctx.moveTo(cx - maxHalf - 2, y); gctx.lineTo(cx + maxHalf + 2, y); gctx.stroke();
+  num.textContent = drawing ? `${Math.round(item.t.width / (state.eraser ? 2.2 : 1))}px` : 'lifted';
 }
 
 // ---------- overlay ----------
@@ -284,56 +359,71 @@ function drawOverlay(items, now) {
   for (const b of tools) { b.classList.remove('hot'); b.querySelector('.ring').style.setProperty('--p', 0); }
   for (const { t, p, lm } of items) {
     const pts = lm.map(toScreen);
-    octx.strokeStyle = 'rgba(255,255,255,.35)'; octx.lineWidth = 2;
+    octx.strokeStyle = 'rgba(255,255,255,.28)'; octx.lineWidth = 2;
     octx.beginPath();
     for (const [a, b] of BONES) { octx.moveTo(pts[a].x, pts[a].y); octx.lineTo(pts[b].x, pts[b].y); }
     octx.stroke();
-    octx.fillStyle = 'rgba(255,255,255,.6)';
-    for (const q of pts) { octx.beginPath(); octx.arc(q.x, q.y, 2.5, 0, 7); octx.fill(); }
 
-    octx.lineWidth = 3;
-    if (t.mode === 'draw') {
-      octx.fillStyle = state.rainbow ? `hsl(${state.hue} 95% 60%)` : state.color;
-      octx.beginPath(); octx.arc(p.x, p.y, Math.max(6, state.size / 2 + 2), 0, 7); octx.fill();
-      octx.strokeStyle = '#000a'; octx.stroke();
-    } else if (t.mode === 'erase') {
-      octx.strokeStyle = '#fff'; octx.setLineDash([8, 6]);
-      octx.beginPath(); octx.arc(p.x, p.y, t.eraseR || 40, 0, 7); octx.stroke(); octx.setLineDash([]);
-    } else if (t.mode === 'hover') {
-      octx.strokeStyle = state.rainbow ? '#fff' : state.color;
-      octx.beginPath(); octx.arc(p.x, p.y, 14, 0, 7); octx.stroke();
-      octx.beginPath(); octx.moveTo(p.x - 20, p.y); octx.lineTo(p.x - 8, p.y); octx.moveTo(p.x + 8, p.y); octx.lineTo(p.x + 20, p.y);
-      octx.moveTo(p.x, p.y - 20); octx.lineTo(p.x, p.y - 8); octx.moveTo(p.x, p.y + 8); octx.lineTo(p.x, p.y + 20); octx.stroke();
+    if (t.mode === 'point') {
+      octx.strokeStyle = '#fff'; octx.lineWidth = 3;
+      octx.beginPath(); octx.arc(p.x, p.y, 12, 0, 7); octx.stroke();
+      octx.fillStyle = inkColor(); octx.beginPath(); octx.arc(p.x, p.y, 5, 0, 7); octx.fill();
+    } else {
+      // brush preview: the exact circle the pen lays down
+      const r = Math.max(2, t.width / 2);
+      octx.lineWidth = 2;
+      if (state.eraser) { octx.strokeStyle = '#fff'; octx.setLineDash([6, 5]); }
+      else { octx.strokeStyle = inkColor(); }
+      octx.globalAlpha = t.mode === 'pen' ? 1 : 0.45;
+      octx.beginPath(); octx.arc(p.x, p.y, r, 0, 7); octx.stroke(); octx.setLineDash([]);
+      // openness dial around it: arc fills as the hand opens
+      const R = r + 14;
+      octx.strokeStyle = 'rgba(255,255,255,.18)'; octx.lineWidth = 5;
+      octx.beginPath(); octx.arc(p.x, p.y, R, -Math.PI / 2, Math.PI * 1.5); octx.stroke();
+      octx.strokeStyle = t.mode === 'pen' ? (state.eraser ? '#fff' : inkColor()) : 'rgba(255,255,255,.5)';
+      octx.lineCap = 'round';
+      octx.beginPath(); octx.arc(p.x, p.y, R, -Math.PI / 2, -Math.PI / 2 + Math.max(0.02, t.open) * Math.PI * 2); octx.stroke();
+      octx.lineCap = 'butt'; octx.globalAlpha = 1;
     }
     if (t.hot) {
       t.hot.classList.add('hot');
       if (t.hot._dwell && !t.fired) t.hot.querySelector('.ring').style.setProperty('--p', Math.min(1, (now - t.hotT) / t.hot._dwell));
     }
   }
+  drawGauge(items[0] || null);
 }
 
-const LABEL = { draw: '☝️ <b>Drawing</b>', hover: '✌️ <b>Moving</b> — hover a button to pick it', erase: '✋ <b>Erasing</b>', rest: '✊ <b>Resting</b>' };
 function setStatus(items) {
-  const html = items.length ? LABEL[items[0].t.mode] : 'Show your hand to the camera 👋';
+  let html = 'Show your hand to the camera 👋';
+  if (items.length) {
+    const m = items[0].t.mode;
+    html = m === 'pen' ? (state.eraser ? '✋ <b>Erasing</b>. Close your hand a little for a smaller eraser' : '✋ <b>Drawing</b>. Close your hand a little for a thinner line')
+      : m === 'point' ? '☝️ <b>Pointing</b>. Hold over a button to pick it'
+      : '✊ <b>Pen lifted</b>. Open your hand to draw';
+  }
   if (statusEl.innerHTML !== html) statusEl.innerHTML = html;
 }
 
-// ---------- mouse / touch fallback (draw with a finger on the screen too) ----------
+// ---------- mouse / touch fallback ----------
 let mouseLast = null;
 overlay.addEventListener('pointerdown', (e) => { snapshot(); mouseLast = { x: e.clientX, y: e.clientY }; overlay.setPointerCapture(e.pointerId); });
 overlay.addEventListener('pointermove', (e) => {
   if (!mouseLast) return;
-  pctx.strokeStyle = strokeColor(); pctx.lineWidth = state.size; pctx.lineCap = 'round';
+  const [lo, hi] = RANGES[state.range];
+  pctx.globalCompositeOperation = state.eraser ? 'destination-out' : 'source-over';
+  if (state.rainbow) state.hue = (state.hue + 2) % 360;
+  pctx.strokeStyle = state.eraser ? '#000' : inkColor(); pctx.lineWidth = (lo + hi) / 2 * (state.eraser ? 2 : 1); pctx.lineCap = 'round';
   pctx.beginPath(); pctx.moveTo(mouseLast.x, mouseLast.y); pctx.lineTo(e.clientX, e.clientY); pctx.stroke();
+  pctx.globalCompositeOperation = 'source-over';
   mouseLast = { x: e.clientX, y: e.clientY };
 });
 addEventListener('pointerup', () => { mouseLast = null; });
 
-// keyboard shortcuts
 addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
   else if (e.key === 'c') clearAll();
   else if (e.key === 's') save();
+  else if (e.key === 'e') setEraser(!state.eraser);
 });
 
 // ---------- start ----------
@@ -356,12 +446,13 @@ async function start() {
     go.textContent = 'Loading hand tracking…';
     landmarker = await loadModel();
     $('help').hidden = true;
+    resize();
     loop();
   } catch (e) {
     console.error(e);
     go.disabled = false; go.textContent = 'Try again';
     err.textContent = e && e.name === 'NotAllowedError'
-      ? 'Camera permission was blocked. Allow the camera in your browser settings and try again.'
+      ? 'Camera access was blocked. Allow the camera in your browser settings, then try again.'
       : 'Could not start: ' + (e && e.message || e);
   }
 }
@@ -378,14 +469,14 @@ function loop() {
       const key = res.handednesses?.[i]?.[0]?.categoryName || String(i);
       items.push(handleHand(lm, key, now));
     });
-    // forget hands that disappeared so their next stroke starts fresh
-    for (const [k, t] of hands) if (now - t.seen > 200) hands.delete(k);
-    if (!items.some(({ t }) => t.mode === 'draw' || t.mode === 'erase')) strokeStarted = false;
+    for (const [k, t] of hands) if (now - t.seen > 250) hands.delete(k);
+    if (!items.some(({ t }) => t.mode === 'pen')) strokeStarted = false;
     drawOverlay(items, now);
     setStatus(items);
   }
   requestAnimationFrame(loop);
 }
+resize();
 statusEl.textContent = 'Tap “Turn on camera” to start';
 </script>
 </body>
