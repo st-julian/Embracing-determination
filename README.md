@@ -19,7 +19,8 @@ is still available with `?world=3d`.
 
 > **Also here: [Air Draw](draw/)** (`draw/index.html`), a small camera toy. Your open palm is the pen: open your
 > hand wide for a thick line, curl your fingers in for a thinner one, make a fist to lift the pen, and point one
-> finger at the top bar to pick colours or the eraser. It needs HTTPS or `localhost` for the camera.
+> finger at the top bar to pick colours or the eraser. Drawing plays music: height sets the note, an open hand is
+> louder, and each colour is a different instrument (the speaker button mutes it). It needs HTTPS or `localhost` for the camera.
 
 ## Install & launch
 

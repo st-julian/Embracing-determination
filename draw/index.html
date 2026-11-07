@@ -80,12 +80,13 @@
 <div id="help">
   <div class="card">
     <h1>✋ Air Draw</h1>
-    <p>Your palm is the pen. The camera follows your hand.</p>
+    <p>Your palm is the pen, and drawing plays music. The camera follows your hand.</p>
     <ul>
       <li><span>✋</span><span><b>Open hand</b>: draw with the middle of your palm. Wide open makes a thick line.</span></li>
       <li><span>🤏</span><span><b>Curl your fingers in</b> to make the line thinner. The gauge on the left shows the size.</span></li>
       <li><span>✊</span><span><b>Fist</b>: stop drawing, so you can move without leaving a line.</span></li>
       <li><span>☝️</span><span><b>Point one finger</b> at the buttons at the top to pick a colour, the eraser and more.</span></li>
+      <li><span>🎵</span><span><b>Drawing plays music.</b> Higher on screen is a higher note, a wider hand is louder, and each colour is a different instrument. The speaker button mutes it.</span></li>
     </ul>
     <button class="go" id="go">Turn on camera</button>
     <div id="err"></div>
@@ -111,8 +112,141 @@ let W = 0, H = 0, DPR = 1;
 const widthFor = (o) => { const [a, b] = RANGES[state.range]; return a + Math.pow(o, 1.3) * (b - a); };
 const inkColor = () => state.rainbow ? `hsl(${state.hue} 95% 60%)` : state.color;
 
+// ---------- sound ----------
+// Each colour is an instrument: [waveform, root frequency of the scale]
+const INSTRUMENTS = [
+  ['sine', 261.63],      // white: soft flute
+  ['sawtooth', 130.81],  // red: buzzy bass
+  ['square', 196.0],     // orange: chiptune
+  ['triangle', 523.25],  // yellow: high bells
+  ['sine', 392.0],       // green: whistle
+  ['triangle', 261.63],  // blue: mellow
+  ['sawtooth', 98.0],    // purple: deep drone
+  ['square', 329.63],    // pink: bright chip
+];
+const RAINBOW_INST = ['triangle', 261.63];
+const SCALE = [0, 2, 4, 7, 9];          // major pentatonic: every note sounds good together
+const STEPS = 13;                       // notes from the bottom of the screen to the top
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const audio = { ctx: null, master: null, noise: null, on: true, voices: new Map() };
+window.__airDrawAudio = audio; // handy for debugging in the console
+const instrument = () => state.rainbow ? RAINBOW_INST : INSTRUMENTS[Math.max(0, COLORS.indexOf(state.color))];
+function stepAt(y) { return Math.max(0, Math.min(STEPS - 1, Math.floor((1 - y / H) * STEPS))); }
+function semisFor(step) { return Math.floor(step / 5) * 12 + SCALE[step % 5]; }
+function freqAt(y) { return instrument()[1] * Math.pow(2, semisFor(stepAt(y)) / 12); }
+function noteName(y) {
+  const midi = Math.round(69 + 12 * Math.log2(freqAt(y) / 440));
+  return NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1);
+}
+
+function initAudio() {
+  if (audio.ctx) { audio.ctx.resume(); return; }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  const ctx = audio.ctx = new AC();
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -18; comp.ratio.value = 4;
+  comp.connect(ctx.destination);
+  audio.master = ctx.createGain(); audio.master.gain.value = audio.on ? 0.9 : 0;
+  audio.master.connect(comp);
+  // echo: a short feedback delay gives the notes some space
+  const delay = ctx.createDelay(1); delay.delayTime.value = 0.27;
+  const fb = ctx.createGain(); fb.gain.value = 0.32;
+  const wet = ctx.createGain(); wet.gain.value = 0.28;
+  const tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = 2800;
+  audio.master.connect(delay); delay.connect(tone); tone.connect(fb); fb.connect(delay); tone.connect(wet); wet.connect(comp);
+  // a loop of white noise for the eraser
+  const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+  const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  audio.noise = buf;
+}
+
+function makeVoice() {
+  const ctx = audio.ctx;
+  const v = { o1: ctx.createOscillator(), o2: ctx.createOscillator(), filt: ctx.createBiquadFilter(), amp: ctx.createGain(),
+    pan: ctx.createStereoPanner ? ctx.createStereoPanner() : null, nsrc: ctx.createBufferSource(), nfilt: ctx.createBiquadFilter(), namp: ctx.createGain(),
+    lfo: ctx.createOscillator(), lfoAmt: ctx.createGain(), speed: 0, last: null, step: -1 };
+  v.o2.detune.value = 8;
+  v.filt.type = 'lowpass'; v.filt.Q.value = 3;
+  v.amp.gain.value = 0;
+  v.lfo.frequency.value = 5.5; v.lfoAmt.gain.value = 0;
+  v.lfo.connect(v.lfoAmt); v.lfoAmt.connect(v.o1.frequency); v.lfoAmt.connect(v.o2.frequency);
+  v.o1.connect(v.filt); v.o2.connect(v.filt); v.filt.connect(v.amp);
+  v.nsrc.buffer = audio.noise; v.nsrc.loop = true;
+  v.nfilt.type = 'bandpass'; v.nfilt.Q.value = 1.2; v.nfilt.frequency.value = 2500;
+  v.namp.gain.value = 0;
+  v.nsrc.connect(v.nfilt); v.nfilt.connect(v.namp);
+  const sink = v.pan || audio.master;
+  v.amp.connect(sink); v.namp.connect(sink);
+  if (v.pan) v.pan.connect(audio.master);
+  v.o1.start(); v.o2.start(); v.lfo.start(); v.nsrc.start();
+  return v;
+}
+
+// called every frame for each hand (and the mouse); drawing=false lets the note fade out
+function playVoice(key, { drawing, x, y, open, now }) {
+  if (!audio.ctx || !audio.noise) return;
+  let v = audio.voices.get(key);
+  if (!v) { if (!drawing) return; v = makeVoice(); audio.voices.set(key, v); }
+  v.seen = now;
+  const ctx = audio.ctx, t = ctx.currentTime;
+  if (v.last) {
+    const dt = Math.max(0.001, (now - v.last.now) / 1000);
+    const sp = Math.hypot(x - v.last.x, y - v.last.y) / dt;
+    v.speed += (sp - v.speed) * 0.25;
+  }
+  v.last = { x, y, now };
+  const motion = 0.3 + 0.7 * Math.min(1, v.speed / 700);    // still hand fades, moving hand swells
+  if (!drawing) {
+    v.amp.gain.setTargetAtTime(0, t, 0.08); v.namp.gain.setTargetAtTime(0, t, 0.05);
+    v.step = -1;
+    return;
+  }
+  if (v.pan) v.pan.pan.setTargetAtTime(Math.max(-0.9, Math.min(0.9, (x / W) * 2 - 1)), t, 0.05);
+  if (state.eraser) {
+    v.amp.gain.setTargetAtTime(0, t, 0.05);
+    v.nfilt.frequency.setTargetAtTime(800 + (1 - y / H) * 5000, t, 0.03);
+    v.namp.gain.setTargetAtTime(0.35 * Math.min(1, v.speed / 600) * (0.4 + 0.6 * open), t, 0.04);
+    return;
+  }
+  v.namp.gain.setTargetAtTime(0, t, 0.05);
+  const [wave, ] = instrument();
+  if (v.o1.type !== wave) { v.o1.type = wave; v.o2.type = wave; }
+  const f = freqAt(y);
+  const step = stepAt(y);
+  // glide between notes, but snap quickly so each step is heard as a note
+  v.o1.frequency.setTargetAtTime(f, t, v.step === -1 ? 0.001 : 0.025);
+  v.o2.frequency.setTargetAtTime(f, t, v.step === -1 ? 0.001 : 0.025);
+  v.step = step;
+  v.lfoAmt.gain.setTargetAtTime(state.rainbow ? f * 0.02 : f * 0.004 * open, t, 0.1);
+  const loud = { sine: 0.32, triangle: 0.3, square: 0.12, sawtooth: 0.13 }[wave];
+  v.filt.frequency.setTargetAtTime(300 + open * 3800 + Math.min(1, v.speed / 900) * 1500, t, 0.05);
+  v.amp.gain.setTargetAtTime(loud * (0.25 + 0.75 * open) * motion, t, 0.04);
+}
+function silenceStaleVoices(now) {
+  if (!audio.ctx) return;
+  for (const [k, v] of audio.voices) if (now - (v.seen || 0) > 150) {
+    v.amp.gain.setTargetAtTime(0, audio.ctx.currentTime, 0.08); v.namp.gain.setTargetAtTime(0, audio.ctx.currentTime, 0.05); v.step = -1; v.last = null;
+  }
+}
+function blip(freq = 880) {
+  if (!audio.ctx || !audio.on) return;
+  const ctx = audio.ctx, t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = 'triangle'; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.25, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+  o.connect(g); g.connect(audio.master); o.start(t); o.stop(t + 0.2);
+}
+function setSound(on) {
+  audio.on = on;
+  if (audio.master) audio.master.gain.setTargetAtTime(on ? 0.9 : 0, audio.ctx.currentTime, 0.05);
+  soundBtn.classList.toggle('active', on);
+  soundBtn.innerHTML = (on ? ICONS.soundOn : ICONS.soundOff) + '<i class="ring"></i>';
+}
+
 // ---------- toolbar ----------
 const ICONS = {
+  soundOn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>',
+  soundOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="m17 9 5 6M22 9l-5 6"/></svg>',
   undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>',
   clear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
   cam: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M3 7h4l2-3h6l2 3h4v13H3z"/><circle cx="12" cy="13" r="4"/></svg>',
@@ -125,8 +259,8 @@ function addTool({ cls = '', html = '', title, onPick, dwell = 0, style = '' }) 
   const b = document.createElement('button');
   b.className = 'tool ' + cls; b.title = title; b.innerHTML = html + '<i class="ring"></i>';
   if (style) b.style.cssText = style;
-  b.addEventListener('click', () => onPick(b));
-  b._pick = onPick; b._dwell = dwell;
+  b.addEventListener('click', () => { initAudio(); b._pick(b); });
+  b._pick = (el) => { onPick(el); blip(660 + 40 * tools.indexOf(el)); }; b._dwell = dwell;
   toolbar.appendChild(b); tools.push(b);
   return b;
 }
@@ -152,6 +286,8 @@ addTool({ html: ICONS.cam, title: 'Camera: dim / on / off', dwell: 700, onPick: 
   document.body.classList.toggle('no-video', state.bg === 'off');
 } });
 addTool({ html: ICONS.save, title: 'Save picture', dwell: 1000, onPick: save });
+const soundBtn = addTool({ html: '', title: 'Sound on / off', dwell: 700, onPick: () => { setSound(!audio.on); blip(audio.on ? 990 : 440); } });
+setSound(true);
 
 function markActive(btn) { for (const s of [...swatches, rainbowBtn]) s.classList.toggle('active', s === btn); }
 markActive(swatches[5]);
@@ -296,6 +432,7 @@ function handleHand(lm, key, now) {
   if (hot !== t.hot) { t.hot = hot; t.hotT = now; t.fired = false; }
   if (hot && !t.fired && now - t.hotT >= hot._dwell) { t.fired = true; hot._pick(hot); }
 
+  playVoice(key, { drawing: t.mode === 'pen', x: p.x, y: p.y, open: t.open, now });
   return { t, p, lm, h };
 }
 
@@ -356,6 +493,19 @@ function drawGauge(item) {
 const BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
 function drawOverlay(items, now) {
   octx.clearRect(0, 0, W, H);
+  if (audio.on) {
+    // faint lanes: one per note, so you can see where the pitch steps are
+    octx.strokeStyle = 'rgba(255,255,255,.05)'; octx.lineWidth = 1;
+    octx.beginPath();
+    for (let i = 1; i < STEPS; i++) { const y = Math.round(H * (1 - i / STEPS)) + 0.5; octx.moveTo(0, y); octx.lineTo(W, y); }
+    octx.stroke();
+  }
+  for (const { t, p } of items) if (audio.on && t.mode === 'pen' && !state.eraser) {
+    octx.font = '700 14px ui-monospace, monospace'; octx.fillStyle = 'rgba(255,255,255,.85)';
+    octx.textAlign = 'center';
+    octx.fillText('♪ ' + noteName(p.y), p.x, p.y - t.width / 2 - 26);
+    octx.textAlign = 'start';
+  }
   for (const b of tools) { b.classList.remove('hot'); b.querySelector('.ring').style.setProperty('--p', 0); }
   for (const { t, p, lm } of items) {
     const pts = lm.map(toScreen);
@@ -406,9 +556,10 @@ function setStatus(items) {
 
 // ---------- mouse / touch fallback ----------
 let mouseLast = null;
-overlay.addEventListener('pointerdown', (e) => { snapshot(); mouseLast = { x: e.clientX, y: e.clientY }; overlay.setPointerCapture(e.pointerId); });
+overlay.addEventListener('pointerdown', (e) => { initAudio(); snapshot(); mouseLast = { x: e.clientX, y: e.clientY }; overlay.setPointerCapture(e.pointerId); });
 overlay.addEventListener('pointermove', (e) => {
   if (!mouseLast) return;
+  playVoice('mouse', { drawing: true, x: e.clientX, y: e.clientY, open: 0.6, now: performance.now() });
   const [lo, hi] = RANGES[state.range];
   pctx.globalCompositeOperation = state.eraser ? 'destination-out' : 'source-over';
   if (state.rainbow) state.hue = (state.hue + 2) % 360;
@@ -417,13 +568,14 @@ overlay.addEventListener('pointermove', (e) => {
   pctx.globalCompositeOperation = 'source-over';
   mouseLast = { x: e.clientX, y: e.clientY };
 });
-addEventListener('pointerup', () => { mouseLast = null; });
+addEventListener('pointerup', () => { mouseLast = null; playVoice('mouse', { drawing: false, x: 0, y: 0, open: 0, now: performance.now() }); });
 
 addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
   else if (e.key === 'c') clearAll();
   else if (e.key === 's') save();
   else if (e.key === 'e') setEraser(!state.eraser);
+  else if (e.key === 'm') setSound(!audio.on);
 });
 
 // ---------- start ----------
@@ -439,6 +591,7 @@ async function loadModel() {
 
 async function start() {
   const go = $('go'), err = $('err');
+  initAudio();
   go.disabled = true; go.textContent = 'Starting camera…'; err.textContent = '';
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
@@ -470,6 +623,7 @@ function loop() {
       items.push(handleHand(lm, key, now));
     });
     for (const [k, t] of hands) if (now - t.seen > 250) hands.delete(k);
+    silenceStaleVoices(now);
     if (!items.some(({ t }) => t.mode === 'pen')) strokeStarted = false;
     drawOverlay(items, now);
     setStatus(items);
