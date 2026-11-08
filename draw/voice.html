@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<title>Voice Draw</title>
+<link rel="icon" href="data:," />
+<style>
+  :root {
+    --bg: #0d0b12; --paper: #121019; --panel: rgba(24, 20, 34, .82); --ink: #f3f0f8; --muted: #a39cb3; --accent: #ffcf5a;
+    --edge: rgba(255,255,255,.13);
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink); overflow: hidden;
+    font: 500 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; touch-action: none; user-select: none; -webkit-user-select: none; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
+
+  #toolbar { position: fixed; top: max(10px, env(safe-area-inset-top)); left: 0; right: 0; margin: 0 auto; width: fit-content;
+    display: flex; gap: 8px; align-items: center; padding: 8px; border-radius: 18px; background: var(--panel);
+    border: 1px solid var(--edge); backdrop-filter: blur(8px); z-index: 5; max-width: calc(100vw - 20px); flex-wrap: wrap; justify-content: center; }
+  .tool { height: 46px; min-width: 46px; padding: 0 12px; border-radius: 13px; border: 2px solid transparent; cursor: pointer;
+    display: flex; gap: 7px; align-items: center; justify-content: center; background: rgba(255,255,255,.07); color: var(--ink); font: 650 14px/1 system-ui; }
+  .tool:hover { background: rgba(255,255,255,.12); }
+  .tool:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tool svg { width: 22px; height: 22px; flex: none; }
+  .tool .sw { width: 18px; height: 18px; border-radius: 50%; flex: none; }
+  .tool small { color: var(--muted); font-weight: 600; }
+  .sep { width: 1px; height: 32px; background: var(--edge); }
+
+  #meter { position: fixed; left: 0; right: 0; margin: 0 auto; width: min(520px, calc(100vw - 24px)); bottom: max(12px, env(safe-area-inset-bottom));
+    z-index: 5; background: var(--panel); border: 1px solid var(--edge); border-radius: 18px; padding: 10px 14px; backdrop-filter: blur(8px);
+    display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; align-items: center; }
+  #hears { font-size: 15px; white-space: nowrap; min-width: 0; }
+  #hears b { color: var(--ink); }
+  #note { justify-self: end; font: 700 15px/1 ui-monospace, monospace; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bar { grid-column: 1 / -1; height: 8px; border-radius: 4px; background: rgba(255,255,255,.08); position: relative; overflow: hidden; }
+  #level { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, #6ee7b7, #ffcf5a, #ff6b6b); border-radius: 4px; }
+  #gateTick { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #fff; opacity: .6; }
+  .steer { grid-column: 1 / -1; display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+  .steer .track { height: 14px; position: relative; border-radius: 7px; background: rgba(255,255,255,.06); }
+  .steer .mid { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: rgba(255,255,255,.35); }
+  #steerDot { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--accent); left: 50%; opacity: .25; transition: opacity .15s; }
+
+  #help { position: fixed; inset: 0; display: grid; place-items: center; z-index: 10; background: rgba(8,6,12,.84); padding: 16px; }
+  #help .card { max-width: 470px; width: 100%; background: #19151f; border: 1px solid var(--edge); border-radius: 20px; padding: 22px 22px 18px; max-height: calc(100vh - 32px); overflow: auto; }
+  #help h1 { margin: 0 0 4px; font-size: 26px; }
+  #help p { margin: 0 0 14px; color: var(--muted); }
+  #help ul { list-style: none; padding: 0; margin: 0 0 18px; display: grid; gap: 10px; }
+  #help li { display: flex; gap: 12px; align-items: center; }
+  #help li span:first-child { font-size: 24px; width: 34px; text-align: center; flex: none; }
+  #help button.go { width: 100%; padding: 14px; border: 0; border-radius: 14px; background: var(--accent); color: #1a1a1a; font: 700 17px system-ui; cursor: pointer; }
+  #help button.go:disabled { opacity: .6; cursor: wait; }
+  #help .alt { display: block; text-align: center; margin-top: 12px; color: var(--muted); font-size: 14px; }
+  #help .alt a { color: var(--ink); }
+  #err { color: #ff9b9b; margin-top: 10px; font-size: 14px; min-height: 1em; }
+  #ytBox { position: fixed; right: max(12px, env(safe-area-inset-right)); top: calc(max(10px, env(safe-area-inset-top)) + 76px); z-index: 6;
+    width: min(360px, calc(100vw - 24px)); border-radius: 14px; overflow: hidden; background: #000; border: 1px solid var(--edge); box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  #ytBox .bar2 { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; background: var(--panel); font-size: 13px; color: var(--muted); }
+  #ytBox .bar2 span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #ytBox .frame { aspect-ratio: 16 / 9; max-width: 100%; }
+  #ytBox iframe { width: 100%; height: 100%; border: 0; display: block; }
+  #ytBox.small .frame { display: none; }
+  .mini { border: 0; background: rgba(255,255,255,.1); color: var(--ink); border-radius: 8px; height: 28px; min-width: 28px; padding: 0 8px; font: 600 13px system-ui; cursor: pointer; }
+  #ytDialog { position: fixed; inset: 0; z-index: 11; display: grid; place-items: center; background: rgba(8,6,12,.7); padding: 16px; }
+  #ytDialog form { width: min(460px, 100%); background: #19151f; border: 1px solid var(--edge); border-radius: 18px; padding: 18px; display: grid; gap: 10px; }
+  #ytDialog h2 { margin: 0; font-size: 20px; }
+  #ytDialog p { margin: 0; color: var(--muted); font-size: 14px; }
+  #ytDialog input { width: 100%; font: 500 16px system-ui; padding: 12px; border-radius: 12px; border: 1px solid var(--edge); background: #0f0d14; color: var(--ink); }
+  #ytDialog .row { display: flex; gap: 8px; justify-content: flex-end; }
+  #ytDialog .row button { padding: 10px 16px; border-radius: 12px; border: 0; font: 700 15px system-ui; cursor: pointer; }
+  #ytDialog .row .ok { background: var(--accent); color: #1a1a1a; }
+  #ytDialog .row .cancel { background: rgba(255,255,255,.1); color: var(--ink); }
+  #ytErr { color: #ff9b9b; font-size: 14px; min-height: 1em; }
+  #help .go2 { width: 100%; padding: 12px; margin-top: 8px; border: 1px solid var(--edge); border-radius: 14px; background: transparent; color: var(--ink); font: 650 15px system-ui; cursor: pointer; }
+  @media (max-width: 560px) { .tool { height: 40px; min-width: 40px; padding: 0 9px; font-size: 13px; } .tool small { display: none; } .sep { display: none; } }
+</style>
+</head>
+<body>
+<canvas id="paint"></canvas>
+<canvas id="overlay"></canvas>
+
+<div id="toolbar"></div>
+
+<div id="meter" aria-live="polite">
+  <div id="hears">🎤 Listening…</div>
+  <div id="note">–</div>
+  <div class="bar"><div id="level"></div><div id="gateTick"></div></div>
+  <div class="steer" id="steerRow"><span>↺ lower</span><div class="track"><div class="mid"></div><div id="steerDot"></div></div><span>higher ↻</span></div>
+</div>
+
+<div id="ytBox" hidden>
+  <div class="bar2"><span id="ytTitle">YouTube: the microphone is listening to it</span><button class="mini" id="ytSmall" type="button">Hide video</button><button class="mini" id="ytClose" type="button" aria-label="Close video">✕</button></div>
+  <div class="frame"><iframe id="ytFrame" title="YouTube video" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>
+</div>
+<div id="ytDialog" hidden>
+  <form id="ytForm">
+    <h2>Play a YouTube video</h2>
+    <p>Paste a YouTube link. Press play on the video and turn your volume up. The microphone listens to the sound, and it draws.</p>
+    <input id="ytUrl" type="text" inputmode="url" autocomplete="off" placeholder="https://www.youtube.com/watch?v=…" />
+    <div id="ytErr"></div>
+    <div class="row"><button type="button" class="cancel" id="ytCancel">Cancel</button><button type="submit" class="ok">Play</button></div>
+  </form>
+</div>
+<input id="fileIn" type="file" accept="audio/*,video/*" hidden />
+
+<div id="help">
+  <div class="card">
+    <h1>🎤 Voice Draw</h1>
+    <p>Make sounds and the pen draws them. Use your microphone, and try it somewhere fairly quiet.</p>
+    <ul>
+      <li><span>🎵</span><span><b>Hum or sing</b> to draw. Go higher than your normal note to curve right, lower to curve left, and hold a steady note to go straight.</span></li>
+      <li><span>📢</span><span><b>Louder</b> makes the line thicker and faster.</span></li>
+      <li><span>🌈</span><span><b>Your pitch picks the colour</b>: low notes are warm, high notes are cool.</span></li>
+      <li><span>🤫</span><span><b>"Shhhh"</b> sprays paint.</span></li>
+      <li><span>👏</span><span><b>Clap, or say "p!"</b>, to splat paint.</span></li>
+      <li><span>🤐</span><span><b>Go quiet</b> and the pen stops.</span></li>
+      <li><span>🎶</span><span><b>Music</b>: press <b>YouTube</b> or <b>File</b> on the top bar to play a song. In Music mode the beat splats, and bright sounds steer and colour the line.</span></li>
+    </ul>
+    <button class="go" id="go">Turn on microphone</button>
+    <button class="go2" id="goFile" type="button">Or draw from a music file (no microphone)</button>
+    <div id="err"></div>
+    <span class="alt">Want to draw with your hands instead? <a href="./index.html">Open Air Draw</a></span>
+  </div>
+</div>
+
+<script>
+(() => {
+const $ = (id) => document.getElementById(id);
+const paint = $('paint'), overlay = $('overlay');
+const pctx = paint.getContext('2d', { willReadFrequently: true }), octx = overlay.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+
+// ---------- settings ----------
+const MODES = { wander: 'Wander', sketch: 'Sketch' };
+const PALETTES = {
+  pitch: { name: 'Rainbow', color: (n, lv) => `hsl(${n * 300} 92% ${52 + lv * 12}%)`, swatch: 'conic-gradient(red, orange, yellow, lime, cyan, blue, magenta, red)' },
+  fire:  { name: 'Fire',    color: (n, lv) => `hsl(${n * 55} 100% ${45 + lv * 20}%)`, swatch: 'linear-gradient(135deg,#ff2d2d,#ffd23d)' },
+  ocean: { name: 'Ocean',   color: (n, lv) => `hsl(${165 + n * 90} 85% ${48 + lv * 18}%)`, swatch: 'linear-gradient(135deg,#1de9b6,#3d5afe)' },
+  ink:   { name: 'Chalk',   color: (n, lv) => `hsla(40 30% 96% / ${0.55 + lv * 0.45})`, swatch: '#f4efe6' },
+};
+const SENS = { low: ['Low', 14], med: ['Medium', 8], high: ['High', 3] };   // dB above the room noise needed to draw
+const state = { mode: 'wander', palette: 'pitch', sens: 'med', hueShift: 0, source: 'voice' };
+const SOURCES = { voice: '🎤 Voice', music: '🎶 Music' };
+
+// ---------- toolbar ----------
+const ICON = {
+  mode: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 17c3-8 6 4 9-4s6 2 9-6"/></svg>',
+  sens: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
+  undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>',
+  clear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>',
+  save: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5M4 21h16"/></svg>',
+  yt: '<svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="4" fill="#ff3d3d"/><path d="m10 9 5 3-5 3z" fill="#fff"/></svg>',
+  file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>',
+  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>',
+};
+const toolbar = $('toolbar');
+function tool(html, title, onClick) {
+  const b = document.createElement('button'); b.className = 'tool'; b.type = 'button'; b.title = title; b.innerHTML = html;
+  b.addEventListener('click', onClick); toolbar.appendChild(b); return b;
+}
+const srcBtn = tool('', 'What it listens for: a voice, or music', () => { state.source = state.source === 'voice' ? 'music' : 'voice'; renderTools(); });
+const modeBtn = tool('', 'Drawing mode', () => { state.mode = state.mode === 'wander' ? 'sketch' : 'wander'; resetPen(); renderTools(); });
+const palBtn = tool('', 'Colours', () => { const k = Object.keys(PALETTES); state.palette = k[(k.indexOf(state.palette) + 1) % k.length]; renderTools(); });
+const sensBtn = tool('', 'Microphone sensitivity', () => { const k = Object.keys(SENS); state.sens = k[(k.indexOf(state.sens) + 1) % k.length]; renderTools(); });
+const sep = document.createElement('div'); sep.className = 'sep'; toolbar.appendChild(sep);
+tool(ICON.yt + '<span>YouTube</span>', 'Play a YouTube video and draw from its sound', openYt);
+tool(ICON.file + '<span>File</span>', 'Draw from a music or video file', () => $('fileIn').click());
+tool(ICON.home, 'Move the pen back to the middle', () => resetPen());
+tool(ICON.undo, 'Undo', undo);
+tool(ICON.clear, 'Clear', clearAll);
+tool(ICON.save, 'Save picture', save);
+function renderTools() {
+  srcBtn.innerHTML = `<span>${SOURCES[state.source]}</span>`;
+  modeBtn.innerHTML = `${ICON.mode}<span>${MODES[state.mode]}</span>`;
+  palBtn.innerHTML = `<span class="sw" style="background:${PALETTES[state.palette].swatch}"></span><span>${PALETTES[state.palette].name}</span>`;
+  sensBtn.innerHTML = `${ICON.sens}<small>Mic</small><span>${SENS[state.sens][0]}</span>`;
+  $('steerRow').hidden = state.mode !== 'wander';
+  $('steerRow').firstElementChild.textContent = state.source === 'music' ? '↺ darker' : '↺ lower';
+  $('steerRow').lastElementChild.textContent = state.source === 'music' ? 'brighter ↻' : 'higher ↻';
+}
+renderTools();
+
+// ---------- canvas ----------
+function resize() {
+  const keep = document.createElement('canvas'); keep.width = paint.width; keep.height = paint.height;
+  if (paint.width) keep.getContext('2d').drawImage(paint, 0, 0);
+  DPR = Math.min(window.devicePixelRatio || 1, 2); W = innerWidth; H = innerHeight;
+  for (const c of [paint, overlay]) { c.width = Math.round(W * DPR); c.height = Math.round(H * DPR); }
+  pctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (keep.width) pctx.drawImage(keep, 0, 0, keep.width, keep.height, 0, 0, paint.width, paint.height);
+  pctx.setTransform(DPR, 0, 0, DPR, 0, 0); octx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+const history = [];
+function snapshot() { history.push(pctx.getImageData(0, 0, paint.width, paint.height)); if (history.length > 25) history.shift(); }
+function undo() { const img = history.pop(); if (img) pctx.putImageData(img, 0, 0); }
+function clearAll() { snapshot(); pctx.clearRect(0, 0, W, H); resetPen(); }
+function save() {
+  const out = document.createElement('canvas'); out.width = paint.width; out.height = paint.height;
+  const o = out.getContext('2d'); o.fillStyle = getComputedStyle(document.body).backgroundColor; o.fillRect(0, 0, out.width, out.height); o.drawImage(paint, 0, 0);
+  const a = document.createElement('a'); a.download = `voice-draw-${Date.now()}.png`; a.href = out.toDataURL('image/png'); a.click();
+}
+addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
+  else if (e.key === 'c') clearAll(); else if (e.key === 's') save();
+});
+
+// ---------- pen ----------
+const pen = { x: 0, y: 0, heading: 0, last: null };
+function resetPen() {
+  pen.x = state.mode === 'sketch' ? 40 : W / 2; pen.y = H / 2; pen.heading = 0; pen.last = null;
+}
+resetPen();
+
+// ---------- sound analysis ----------
+const MIN_F = 70, MAX_F = 1000;
+let audioCtx, analyser, timeBuf, freqBuf;
+const ear = {
+  floorDb: -60, calib: [], calibUntil: 0,
+  db: -100, level: 0, f0: 0, voiced: false, centroid: 0,
+  kind: 'quiet', pitchHist: [], centre: 0, avgRms: 0, lastClap: 0, lastSound: 0, onset: null,
+  bright: 0, brightAvg: 0, low: 0, lowAvg: 0, lastBeat: 0,
+};
+
+// YIN pitch detector on a 1024-sample window
+function detectPitch(buf, sr) {
+  const Wn = 1024, minLag = Math.floor(sr / MAX_F), maxLag = Math.min(Math.floor(sr / MIN_F), buf.length - Wn - 1);
+  const d = new Float32Array(maxLag + 1);
+  for (let tau = 1; tau <= maxLag; tau++) {
+    let s = 0;
+    for (let i = 0; i < Wn; i++) { const v = buf[i] - buf[i + tau]; s += v * v; }
+    d[tau] = s;
+  }
+  let run = 0, best = -1, bestVal = 1;
+  const cm = new Float32Array(maxLag + 1); cm[0] = 1;
+  for (let tau = 1; tau <= maxLag; tau++) { run += d[tau]; cm[tau] = run ? d[tau] * tau / run : 1; }
+  for (let tau = minLag; tau <= maxLag; tau++) {
+    if (cm[tau] < 0.15) { while (tau + 1 <= maxLag && cm[tau + 1] < cm[tau]) tau++; best = tau; bestVal = cm[tau]; break; }
+    if (cm[tau] < bestVal) { bestVal = cm[tau]; best = tau; }
+  }
+  if (best < 0 || bestVal > 0.3) return { f: 0, clarity: 0 };
+  // parabolic interpolation for a finer pitch
+  let t = best;
+  if (best > 1 && best < maxLag) {
+    const a = cm[best - 1], b = cm[best], c = cm[best + 1], den = a + c - 2 * b;
+    if (den) t = best + (a - c) / (2 * den);
+  }
+  return { f: sr / t, clarity: 1 - bestVal };
+}
+
+function listen(now) {
+  analyser.getFloatTimeDomainData(timeBuf);
+  let sum = 0; for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i];
+  const rms = Math.sqrt(sum / timeBuf.length);
+  const db = 20 * Math.log10(rms + 1e-9);
+  ear.db = db;
+
+  // learn the room's background noise: first second, then slowly follow it
+  if (now < ear.calibUntil) { ear.calib.push(db); ear.floorDb = ear.calib.slice().sort((a, b) => a - b)[Math.floor(ear.calib.length / 2)]; }
+  else if (db < ear.floorDb) ear.floorDb += (db - ear.floorDb) * 0.05;
+  else ear.floorDb += 0.003;
+  ear.floorDb = Math.max(-90, Math.min(-25, ear.floorDb));
+  const gate = ear.floorDb + SENS[state.sens][1];
+  ear.level = Math.max(0, Math.min(1, (db - gate) / 28));
+
+  // spectrum centre of mass (high = hissy "shhh")
+  analyser.getFloatFrequencyData(freqBuf);
+  let num = 0, den = 0; const binHz = audioCtx.sampleRate / analyser.fftSize;
+  for (let i = 2; i < freqBuf.length; i++) { const m = Math.pow(10, freqBuf[i] / 20); num += m * i * binHz; den += m; }
+  ear.centroid = den ? num / den : 0;
+  // bass energy (about 40–160 Hz) for beat detection
+  let low = 0; for (let i = Math.floor(40 / binHz); i <= Math.ceil(160 / binHz); i++) low += Math.pow(10, freqBuf[i] / 10);
+  ear.low = low;
+
+  if (state.source === 'music') { listenMusic(now, db, db > ear.floorDb + SENS[state.sens][1]); return; }
+
+  const loud = db > gate;
+  // sudden jump in loudness = clap / pop
+  const jump = rms / (ear.avgRms + 1e-6);
+  ear.avgRms += (rms - ear.avgRms) * 0.15;
+  let kind = 'quiet', f0 = 0;
+  // a clap is a sudden jump that dies away within ~150 ms; the start of a hum jumps too but keeps going
+  if (loud && jump > 3.2 && db > gate + 10 && !ear.onset) ear.onset = { t: now, peak: rms };
+  if (ear.onset) {
+    ear.onset.peak = Math.max(ear.onset.peak, rms);
+    const age = now - ear.onset.t;
+    if (age > 15 && rms < ear.onset.peak * 0.22) {
+      if (now - ear.lastClap > 250) { kind = 'clap'; ear.lastClap = now; }
+      ear.onset = null;
+    } else if (age > 170) ear.onset = null;
+  }
+  if (kind === 'clap') { /* splat */ }
+  else if (loud) {
+    const p = detectPitch(timeBuf, audioCtx.sampleRate);
+    if (p.f && p.clarity > 0.75) { kind = 'hum'; f0 = p.f; }
+    else if (ear.centroid > 2600 && now - ear.lastClap > 150) kind = 'hiss';
+    else kind = 'noise';
+  }
+  // steady the pitch with a short median
+  if (f0) { ear.pitchHist.push(f0); if (ear.pitchHist.length > 5) ear.pitchHist.shift(); }
+  else if (kind !== 'hum') ear.pitchHist.length = 0;
+  ear.f0 = ear.pitchHist.length ? ear.pitchHist.slice().sort((a, b) => a - b)[ear.pitchHist.length >> 1] : 0;
+  // your "middle" note: slowly learned from what you hum
+  if (ear.f0) ear.centre = ear.centre ? ear.centre * Math.pow(ear.f0 / ear.centre, 0.004) : ear.f0;
+  ear.kind = kind;
+  if (kind !== 'quiet') ear.lastSound = now;
+}
+
+// music: loudness drives the pen, brightness (spectral centre) steers and colours, bass hits are beats
+function listenMusic(now, db, loud) {
+  ear.pitchHist.length = 0; ear.f0 = 0;
+  if (ear.centroid) {
+    ear.bright = ear.bright ? ear.bright + (ear.centroid - ear.bright) * 0.18 : ear.centroid;
+    ear.brightAvg = ear.brightAvg ? ear.brightAvg * Math.pow(ear.bright / ear.brightAvg, 0.01) : ear.bright;
+  }
+  const beat = loud && ear.lowAvg > 0 && ear.low > ear.lowAvg * 2.2 && now - ear.lastBeat > 260;
+  ear.lowAvg = ear.lowAvg ? ear.lowAvg + (ear.low - ear.lowAvg) * 0.08 : ear.low;
+  if (beat) ear.lastBeat = now;
+  ear.kind = !loud ? 'quiet' : beat ? 'beat' : 'music';
+  if (loud) ear.lastSound = now;
+}
+const brightNorm = (c) => Math.max(0, Math.min(1, Math.log(c / 250) / Math.log(5000 / 250)));
+
+// pitch → 0..1 across 80 Hz … 800 Hz on a log scale (used for colour and sketch height)
+const pitchNorm = (f) => Math.max(0, Math.min(1, Math.log(f / 80) / Math.log(10)));
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+function noteName(f) { const m = Math.round(69 + 12 * Math.log2(f / 440)); return NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1); }
+function colorFor(f, lv) {
+  const n = ((f ? pitchNorm(f) : 0.5) + state.hueShift) % 1;
+  return PALETTES[state.palette].color(n, lv);
+}
+
+// ---------- drawing ----------
+let phraseOpen = false, lastColor = '#fff', lastF = 220;
+function strokeTo(x, y, width, color) {
+  if (!pen.last) pen.last = { x: pen.x, y: pen.y };
+  pctx.globalCompositeOperation = 'source-over';
+  pctx.strokeStyle = color; pctx.lineWidth = width; pctx.lineCap = 'round'; pctx.lineJoin = 'round';
+  pctx.beginPath(); pctx.moveTo(pen.last.x, pen.last.y); pctx.lineTo(x + 0.01, y); pctx.stroke();
+  pen.last = { x, y };
+}
+function spray(x, y, lv, color) {
+  const r = 14 + lv * 46, n = 10 + Math.round(lv * 30);
+  pctx.fillStyle = color;
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, d = Math.pow(Math.random(), 0.6) * r;
+    pctx.globalAlpha = 0.35 + Math.random() * 0.5;
+    pctx.beginPath(); pctx.arc(x + Math.cos(a) * d, y + Math.sin(a) * d, 0.8 + Math.random() * 1.8, 0, 7); pctx.fill();
+  }
+  pctx.globalAlpha = 1;
+}
+function splat(x, y, lv, scale = 1) {
+  state.hueShift = (state.hueShift + 0.17) % 1;            // each clap moves the colours along
+  const color = colorFor(lastF, 0.6), R = (18 + lv * 40) * scale;
+  pctx.fillStyle = color;
+  pctx.beginPath(); pctx.arc(x, y, R, 0, 7); pctx.fill();
+  for (let i = 0, n = Math.round(14 * scale); i < n; i++) {
+    const a = Math.random() * Math.PI * 2, d = R * (1 + Math.random() * 1.6), r = 2 + Math.random() * R * 0.35;
+    pctx.beginPath(); pctx.arc(x + Math.cos(a) * d, y + Math.sin(a) * d, r, 0, 7); pctx.fill();
+    pctx.lineWidth = r * 0.8; pctx.strokeStyle = color; pctx.lineCap = 'round';
+    pctx.beginPath(); pctx.moveTo(x + Math.cos(a) * R * 0.8, y + Math.sin(a) * R * 0.8); pctx.lineTo(x + Math.cos(a) * d, y + Math.sin(a) * d); pctx.stroke();
+  }
+  ripples.push({ x, y, t: performance.now(), color });
+}
+const ripples = [];
+
+function step(now, dt) {
+  const k = ear.kind, lv = ear.level;
+  if (k !== 'quiet' && !phraseOpen) { snapshot(); phraseOpen = true; }
+  if (k === 'quiet' && now - ear.lastSound > 400) { phraseOpen = false; pen.last = null; }
+
+  if (k === 'clap') { splat(pen.x, pen.y, lv); pen.last = null; return; }
+  if (k === 'beat') { splat(pen.x, pen.y, lv, 0.5); pen.last = null; }
+  if (k === 'music' || k === 'beat') {
+    const n = (brightNorm(ear.bright) + state.hueShift) % 1;
+    const color = lastColor = PALETTES[state.palette].color(n, lv);
+    const width = 2 + lv * 26;
+    if (state.mode === 'wander') {
+      const steer = Math.log2(ear.bright / (ear.brightAvg || ear.bright));
+      pen.heading += (Math.max(-1, Math.min(1, steer / 0.5)) * 2.4 + 0.35) * dt;   // slight constant swirl keeps it moving around
+      const speed = 60 + lv * 300;
+      let nx = pen.x + Math.cos(pen.heading) * speed * dt, ny = pen.y + Math.sin(pen.heading) * speed * dt;
+      if (nx < 0 || nx > W || ny < 0 || ny > H) { pen.x = (nx + W) % W; pen.y = (ny + H) % H; pen.last = null; return; }
+      strokeTo(nx, ny, width, color); pen.x = nx; pen.y = ny;
+    } else {
+      const top = 110, bottom = H - 120, ty = bottom - brightNorm(ear.bright) * (bottom - top);
+      let nx = pen.x + (70 + lv * 200) * dt;
+      if (nx > W - 20) { nx = 40; pen.last = null; }
+      const ny = pen.y + (ty - pen.y) * 0.25;
+      strokeTo(nx, ny, width, color); pen.x = nx; pen.y = ny;
+    }
+    return;
+  }
+
+  if (k === 'hum' && ear.f0) {
+    lastF = ear.f0;
+    const width = 3 + lv * 34;
+    const color = lastColor = colorFor(ear.f0, lv);
+    if (state.mode === 'wander') {
+      const semis = 12 * Math.log2(ear.f0 / (ear.centre || ear.f0));
+      const turn = Math.max(-1, Math.min(1, semis / 5)) * 2.6;      // up to ~150°/s
+      pen.heading += turn * dt;
+      const speed = 70 + lv * 330;
+      let nx = pen.x + Math.cos(pen.heading) * speed * dt, ny = pen.y + Math.sin(pen.heading) * speed * dt;
+      // wrap around the edges
+      if (nx < 0 || nx > W || ny < 0 || ny > H) {
+        nx = (nx + W) % W; ny = (ny + H) % H; pen.x = nx; pen.y = ny; pen.last = null; return;
+      }
+      strokeTo(nx, ny, width, color); pen.x = nx; pen.y = ny;
+    } else {
+      const top = 110, bottom = H - 120;
+      const ty = bottom - pitchNorm(ear.f0) * (bottom - top);
+      let nx = pen.x + (90 + lv * 220) * dt;
+      if (nx > W - 20) { nx = 40; pen.last = null; }
+      const ny = pen.y + (ty - pen.y) * 0.35;
+      strokeTo(nx, ny, width, color); pen.x = nx; pen.y = ny;
+    }
+  } else if (k === 'hiss') {
+    const color = colorFor(lastF, lv);
+    spray(pen.x, pen.y, lv, color);
+    // creep forward slowly while spraying so you can lay a trail
+    const speed = 25 + lv * 60;
+    if (state.mode === 'wander') { pen.x = (pen.x + Math.cos(pen.heading) * speed * dt + W) % W; pen.y = (pen.y + Math.sin(pen.heading) * speed * dt + H) % H; }
+    else { pen.x = Math.min(W - 20, pen.x + speed * dt); }
+    pen.last = null;
+  } else {
+    pen.last = null;
+  }
+}
+
+// ---------- overlay & meters ----------
+function drawOverlay(now) {
+  octx.clearRect(0, 0, W, H);
+  if (state.mode === 'sketch') {
+    // note lanes so you can see which pitch lands where
+    const top = 110, bottom = H - 120;
+    octx.font = '600 11px ui-monospace, monospace'; octx.textBaseline = 'middle';
+    for (const [name, f] of [['C2', 65.4], ['C3', 130.8], ['C4', 261.6], ['C5', 523.3]]) {
+      if (f < 80) continue;
+      const y = bottom - pitchNorm(f) * (bottom - top);
+      octx.strokeStyle = 'rgba(255,255,255,.07)'; octx.beginPath(); octx.moveTo(0, y); octx.lineTo(W, y); octx.stroke();
+      octx.fillStyle = 'rgba(255,255,255,.35)'; octx.fillText(name, 8, y - 8);
+    }
+  }
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const r = ripples[i], a = (now - r.t) / 500;
+    if (a > 1) { ripples.splice(i, 1); continue; }
+    octx.strokeStyle = r.color; octx.globalAlpha = 1 - a; octx.lineWidth = 3;
+    octx.beginPath(); octx.arc(r.x, r.y, 30 + a * 90, 0, 7); octx.stroke(); octx.globalAlpha = 1;
+  }
+  // pen: a ring that pulses with your volume, and an arrow for where it is heading
+  const active = ear.kind !== 'quiet';
+  const R = 9 + ear.level * 18;
+  octx.lineWidth = 2.5; octx.strokeStyle = active ? lastColor : 'rgba(255,255,255,.55)';
+  octx.beginPath(); octx.arc(pen.x, pen.y, R, 0, 7); octx.stroke();
+  octx.fillStyle = '#fff'; octx.beginPath(); octx.arc(pen.x, pen.y, 2.5, 0, 7); octx.fill();
+  const hd = state.mode === 'wander' ? pen.heading : 0;
+  const ax = pen.x + Math.cos(hd) * (R + 12), ay = pen.y + Math.sin(hd) * (R + 12);
+  octx.fillStyle = active ? lastColor : 'rgba(255,255,255,.55)';
+  octx.beginPath();
+  octx.moveTo(ax + Math.cos(hd) * 8, ay + Math.sin(hd) * 8);
+  octx.lineTo(ax + Math.cos(hd + 2.4) * 7, ay + Math.sin(hd + 2.4) * 7);
+  octx.lineTo(ax + Math.cos(hd - 2.4) * 7, ay + Math.sin(hd - 2.4) * 7);
+  octx.closePath(); octx.fill();
+}
+
+const HEARS = {
+  quiet: '🤐 <b>Quiet</b>. Hum, sing, "shhh" or clap',
+  hum: '🎵 <b>Humming</b>',
+  hiss: '🤫 <b>Shhh</b>: spraying',
+  clap: '👏 <b>Clap!</b> Splat',
+  noise: '🔊 <b>Noise</b>. Try a clear hum',
+  music: '🎶 <b>Music</b>: drawing',
+  beat: '🥁 <b>Beat!</b>',
+};
+let clapShownUntil = 0, shownKind = 'clap';
+function updateMeter(now) {
+  if (ear.kind === 'clap' || ear.kind === 'beat') { clapShownUntil = now + 300; shownKind = ear.kind; }
+  const k = now < clapShownUntil ? shownKind : (state.source === 'music' && ear.kind !== 'quiet' ? 'music' : ear.kind);
+  let html = HEARS[k];
+  if (k === 'hum' && state.mode === 'wander' && ear.centre) {
+    const s = 12 * Math.log2(ear.f0 / ear.centre);
+    html += s > 0.7 ? ': curving right ↻' : s < -0.7 ? ': curving left ↺' : ': straight';
+  } else if (k === 'hum') html += ': drawing';
+  const hears = $('hears'); if (hears.innerHTML !== html) hears.innerHTML = html;
+  $('note').textContent = state.source === 'music' ? (ear.kind !== 'quiet' && ear.bright ? `bright ${Math.round(ear.bright)} Hz` : '–')
+    : ear.f0 ? `${noteName(ear.f0)} · ${Math.round(ear.f0)} Hz` : '–';
+  // level bar spans -90 … -10 dB, with a tick where drawing starts
+  const pct = (d) => Math.max(0, Math.min(100, (d + 90) / 80 * 100));
+  $('level').style.width = pct(ear.db) + '%';
+  $('gateTick').style.left = pct(ear.floorDb + SENS[state.sens][1]) + '%';
+  const dot = $('steerDot');
+  if (state.source === 'music' && ear.kind !== 'quiet' && ear.brightAvg) {
+    const s = Math.max(-1, Math.min(1, Math.log2(ear.bright / ear.brightAvg) / 0.5));
+    dot.style.left = (50 + s * 50) + '%'; dot.style.opacity = 1; dot.style.background = lastColor;
+  } else if (ear.f0 && ear.centre) {
+    const s = Math.max(-1, Math.min(1, 12 * Math.log2(ear.f0 / ear.centre) / 7));
+    dot.style.left = (50 + s * 50) + '%'; dot.style.opacity = 1; dot.style.background = lastColor;
+  } else dot.style.opacity = .25;
+}
+
+// ---------- mouse / touch fallback: drag to draw ----------
+let drag = null;
+overlay.addEventListener('pointerdown', (e) => { snapshot(); drag = { x: e.clientX, y: e.clientY }; overlay.setPointerCapture(e.pointerId); });
+overlay.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  pctx.strokeStyle = colorFor(lastF, 0.5); pctx.lineWidth = 8; pctx.lineCap = 'round';
+  pctx.beginPath(); pctx.moveTo(drag.x, drag.y); pctx.lineTo(e.clientX, e.clientY); pctx.stroke();
+  drag = { x: e.clientX, y: e.clientY }; pen.x = drag.x; pen.y = drag.y; pen.last = null;
+});
+addEventListener('pointerup', () => { drag = null; });
+
+// ---------- start ----------
+let micSrc = null, fileSrc = null, fileEl = null, running = false;
+function ensureAudio() {
+  if (audioCtx) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  audioCtx = new AC();
+  analyser = audioCtx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.2;
+  timeBuf = new Float32Array(analyser.fftSize); freqBuf = new Float32Array(analyser.frequencyBinCount);
+}
+function run(learnRoom = true) {
+  $('help').hidden = true;
+  if (!running) { running = true; ear.calibUntil = learnRoom ? performance.now() + 1000 : 0; requestAnimationFrame(loop); }
+}
+async function startMic() {
+  ensureAudio();
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  await audioCtx.resume();
+  micSrc = audioCtx.createMediaStreamSource(stream);
+  if (!fileSrc) micSrc.connect(analyser);
+}
+// a music/video file goes straight into the analyser (and out of the speakers); the mic is paused meanwhile
+function playFile(file) {
+  ensureAudio(); audioCtx.resume();
+  if (!fileEl) {
+    fileEl = new Audio(); fileEl.playsInline = true; fileEl.crossOrigin = 'anonymous';
+    fileSrc = audioCtx.createMediaElementSource(fileEl);
+    fileSrc.connect(analyser); fileSrc.connect(audioCtx.destination);
+    fileEl.addEventListener('ended', () => { if (micSrc) micSrc.connect(analyser); });
+  }
+  if (micSrc) try { micSrc.disconnect(analyser); } catch (e) {}
+  if (fileEl.src) URL.revokeObjectURL(fileEl.src);
+  fileEl.src = URL.createObjectURL(file);
+  fileEl.play();
+  state.source = 'music'; renderTools();
+  run(false);
+  floorForMusic();
+}
+// music is far louder than the room; drop the learned floor so quiet passages still draw
+function floorForMusic() { ear.calibUntil = 0; ear.floorDb = Math.min(ear.floorDb, -60); }
+$('fileIn').addEventListener('change', (e) => { const f = e.target.files && e.target.files[0]; if (f) playFile(f); e.target.value = ''; });
+
+function ytId(url) {
+  const m = String(url).trim().match(/(?:youtu\.be\/|v=|\/embed\/|\/shorts\/|\/live\/)([\w-]{11})/) || String(url).trim().match(/^([\w-]{11})$/);
+  return m && m[1];
+}
+function openYt() { $('ytErr').textContent = ''; $('ytDialog').hidden = false; setTimeout(() => $('ytUrl').focus(), 50); }
+$('ytCancel').addEventListener('click', () => { $('ytDialog').hidden = true; });
+$('ytForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = ytId($('ytUrl').value);
+  if (!id) { $('ytErr').textContent = 'That does not look like a YouTube link. Copy it from the Share button on YouTube.'; return; }
+  if (!micSrc) { try { await startMic(); } catch (err) { $('ytErr').textContent = 'The microphone is needed to hear the video. Allow it in your browser settings.'; return; } }
+  if (fileEl) { fileEl.pause(); try { micSrc.connect(analyser); } catch (er) {} }
+  $('ytFrame').src = `https://www.youtube-nocookie.com/embed/${id}?playsinline=1&autoplay=1&rel=0`;
+  $('ytBox').hidden = false; $('ytBox').classList.remove('small'); $('ytSmall').textContent = 'Hide video';
+  $('ytDialog').hidden = true;
+  state.source = 'music'; renderTools();
+  run();
+});
+$('ytClose').addEventListener('click', () => { $('ytFrame').src = 'about:blank'; $('ytBox').hidden = true; });
+$('ytSmall').addEventListener('click', () => { const sm = $('ytBox').classList.toggle('small'); $('ytSmall').textContent = sm ? 'Show video' : 'Hide video'; });
+$('goFile').addEventListener('click', () => $('fileIn').click());
+
+async function start() {
+  const go = $('go'), err = $('err');
+  go.disabled = true; go.textContent = 'Starting microphone…'; err.textContent = '';
+  try {
+    await startMic();
+    run();
+  } catch (e) {
+    console.error(e);
+    go.disabled = false; go.textContent = 'Try again';
+    err.textContent = e && e.name === 'NotAllowedError'
+      ? 'Microphone access was blocked. Allow the microphone in your browser settings, then try again.'
+      : 'Could not start: ' + (e && e.message || e);
+  }
+}
+$('go').addEventListener('click', start);
+
+let lastT = 0;
+function loop(now) {
+  const dt = lastT ? Math.min(0.05, (now - lastT) / 1000) : 0.016; lastT = now;
+  listen(now);
+  if (now > ear.calibUntil) step(now, dt);
+  drawOverlay(now);
+  updateMeter(now);
+  window.__voiceDraw = { kind: ear.kind, f0: ear.f0, level: ear.level, x: pen.x, y: pen.y };
+  requestAnimationFrame(loop);
+}
+})();
+</script>
+</body>
+</html>

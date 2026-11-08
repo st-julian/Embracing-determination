@@ -17,6 +17,17 @@ is still available with `?world=3d`.
 - Up to 4 local players can share one screen, co-op against bots or in versus. Bots fill the empty slots of
   the six trainers.
 
+> **Also here: [Air Draw](draw/)** (`draw/index.html`), a small camera toy. Your open palm is the pen: open your
+> hand wide for a thick line, curl your fingers in for a thinner one, make a fist to lift the pen, and point one
+> finger at the top bar to pick colours or the eraser. Drawing plays music: height sets the note, an open hand is
+> louder, and each colour is a different instrument (the speaker button mutes it). It needs HTTPS or `localhost` for the camera.
+>
+> **[Voice Draw](draw/voice.html)** (`draw/voice.html`) goes the other way: you make sounds and it draws. Hum or sing to
+> move the pen (higher than your usual note curves right, lower curves left), louder makes a thicker line, your pitch
+> picks the colour, "shhh" sprays paint and a clap splats. It needs the microphone, so the same HTTPS rule applies.
+> Its **YouTube** button plays a video in the page while the microphone listens to it, and **File** draws straight from a
+> music file. Music mode turns loudness into line weight, brightness into steering and colour, and beats into splats.
+
 ## Install & launch
 
 No build step: the game is plain ES modules plus static assets.
